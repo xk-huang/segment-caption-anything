@@ -1,0 +1,65 @@
+env_defaults:
+
+  SHARED_CMD_ARGS: >
+    -m src.train
+    train_data='[vg-densecap-region_descriptions]' eval_data='[vg-densecap-region_descriptions]'
+    +model=base_sca
+    training.do_train=True
+    training.do_eval=True
+    training.do_inference=True
+    +data.streaming=False
+    training.max_eval_samples=800
+    training.max_steps=200000
+    training.fp16=True
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    training.save_strategy=steps
+    training.save_steps=5000
+    training.save_total_limit=3
+    training.optim=adamw_torch
+    training.evaluate_before_train=True
+    training.per_device_train_batch_size=1
+    training.evaluation_strategy=steps
+    training.eval_steps=5000
+    training.logging_steps=1000
+    training.logging_first_step=True
+    training.lr_scheduler_type=constant
+    training.warmup_steps=2000
+    training.learning_rate=1e-4
+    model.lm_head_model_name_or_path=gpt2-large
+    training.dataloader_num_workers=4
+    training.num_masks_per_sample=8
+    model.num_caption_tokens=8
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    wandb.group=$AMLT_EXPERIMENT_NAME-$AMLT_DESCRIPTION
+    wandb.name=$AMLT_JOB_NAME
+
+
+environment:
+
+  image: nvidia/pytorch:23.07-py3
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: sca-debug
+    sku: G$NUM_GPUS
+    process_count_per_node: 1 # Each node should run 1 process
+    preemptible: False
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - . amlt_configs/post_process.sh
+      # - accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml $SHARED_CMD_ARGS || . amlt_configs/post_process.sh
+
+    submit_args:
+      env:
+        AZFUSE_USE_FUSE: "1"
+        SHARED_MEMORY_PERCENT: 0.5
+      container_args:
+        shm_size: 256g

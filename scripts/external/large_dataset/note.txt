@@ -1,0 +1,4 @@
+Openimage: 嗯嗯是的，或者用azcopy到机器本地也可以，data读取会快一点
+
+CC: 这份dataloader的逻辑是把所有的split均分给每个gpu rank，然后每个rank只读自己负责的tsv，
+还需要注意的是resume，因为一个epoch比较久，也许需要根据训练的epoch和iter数来resume，这里之前针对laion专门做过，可以参考：

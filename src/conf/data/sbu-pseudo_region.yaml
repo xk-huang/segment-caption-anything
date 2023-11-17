@@ -1,0 +1,6 @@
+defaults:
+  - base_sbu_pseudo_region
+  - _self_
+
+base_dir: 'path_to_your_dataset'
+base_annotations_dir: "path_to_your_dataset"

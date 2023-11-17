@@ -1,0 +1,12 @@
+hydra:
+  run:
+    dir: ${training.output_dir}
+
+defaults:
+  - base_config  # see src/arguments.py
+  - _self_
+
+training:
+  output_dir: "exp"
+  # NOTE: To support multiple level of config override: https://github.com/facebookresearch/tava/blob/a9576801e81aebcf242588be39315e27f915894e/configs/nerf_dyn.yaml#L61C10-L61C10c
+  data_transforms: ${data_transforms}

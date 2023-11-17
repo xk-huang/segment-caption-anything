@@ -1,0 +1,69 @@
+env_defaults:
+
+  SHARED_CMD_ARGS: '
+    -m src.train
+    train_data=[vg-densecap-region_descriptions] eval_data=[vg-densecap-region_descriptions]
+    +model=base_sam_captioner
+    training.do_train=False
+    training.do_eval=False
+    training.do_inference=True
+    +data.streaming=False
+    training.fp16=True
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    training.dataloader_num_workers=4
+  '
+
+environment:
+
+  image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+# Salesforce/blip-image-captioning-large, Salesforce/blip-image-captioning-base, microsoft/git-large-coco, microsoft/git-large-textcaps, microsoft/git-large, microsoft/git-base-coco, microsoft/git-base-textcaps, microsoft/git-base
+# LM_MODEL='Salesforce/blip-image-captioning-large' && amlt run config.yaml :Salesforce/blip-image-captioning-large=$LM_MODEL --extra-args "model.captioner_model_name_or_path=$LM_MODEL"
+jobs:
+  - name: Salesforce/blip-image-captioning-large
+    sku: G$NUM_GPUS
+    preemptible: False
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - pip install pydantic==1.10.8  # https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471
+      - . amlt_configs/setup_eval_suite.sh
+      - . amlt_configs/setup_accelerate_on_azure.sh
+
+      # caption
+      - DATASET=vg-densecap-region_descriptions
+      - accelerate launch --num_processes $NUM_GPUS $SHARED_CMD_ARGS model.captioner_model_name_or_path=Salesforce/blip-image-captioning-large train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      - bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference /mnt/blob/data/sca-eval_suite-data/extract_region_img_annot_caption_to_tsv-vg-densecap-region_descriptions/region_img_annot_caption/visual_genome.py-region_descriptions_v1.2.0-test.region_img.tsv
+
+      - DATASET=refcoco-google
+      - accelerate launch --num_processes $NUM_GPUS $SHARED_CMD_ARGS model.captioner_model_name_or_path=Salesforce/blip-image-captioning-large train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      - bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference /mnt/blob/data/sca-eval_suite-data/extract_region_img_annot_caption_to_tsv-refcoco-google/region_img_annot_caption/refcoco.py-refcoco-google-test.region_img.tsv
+
+      # concept
+      - DATASET=coco-instance
+      - accelerate launch --num_processes $NUM_GPUS $SHARED_CMD_ARGS model.captioner_model_name_or_path=Salesforce/blip-image-captioning-large train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # OOM and every slow
+      # - DATASET=objects365-local
+      # - accelerate launch --num_processes $NUM_GPUS $SHARED_CMD_ARGS model.captioner_model_name_or_path=Salesforce/blip-image-captioning-large train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # OOM and every slow
+      # - DATASET=v3det-local
+      # - accelerate launch --num_processes $NUM_GPUS $SHARED_CMD_ARGS model.captioner_model_name_or_path=Salesforce/blip-image-captioning-large train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+      container_args:
+        shm_size: 256g

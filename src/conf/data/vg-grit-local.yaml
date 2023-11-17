@@ -1,0 +1,7 @@
+# NOET: We need it for backward compatibility of data config name
+defaults:
+  - base_vg_grit_local  # see src/arguments.py, group "data"
+  - _self_
+
+base_dir: '/mnt/onemodel/data_raw/VisualGenome/'
+base_annotation_dir: '/mnt/onemodel/data_raw/VisualGenome/annotations/'

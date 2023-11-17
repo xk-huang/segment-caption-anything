@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Image Visualization</title>
+    <style>
+        .image-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-around;
+        }
+
+        .image-container {
+            flex: 1 0 calc(100% / {{images_per_row}}- 10px);
+            max-width: calc(100% / {{images_per_row}}- 10px);
+            margin: 5px;
+            box-sizing: border-box;
+        }
+
+        .image-container img {
+            width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <form method="POST">
+        {% for job_name in job_names %}
+        <div class="checkbox">
+            <label>
+                <input type="checkbox" name="job_names" value="{{ job_name }}" {% if job_name in selected_job_names %}
+                    checked {% endif %}>
+                {{ job_name }}
+            </label>
+        </div>
+        {% endfor %}
+        <div style="display: flex; gap: 20px;">
+            Number of images: <input type="number" name="num_images" value="{{ num_images }}"><br>
+            Images per row: <input type="number" name="images_per_row" value="{{ images_per_row }}"><br>
+            Start image ID: <input type="number" name="start_image_id" value="{{ start_image_id }}"><br>
+        </div>
+
+        <div style="display: flex; gap: 20px;">
+            Plot bbox: <input type="checkbox" name="plot_bbox" {% if plot_bbox %}checked{% endif %}><br>
+            Plot mask boundary: <input type="checkbox" name="plot_mask_boundary" {% if plot_mask_boundary %}checked{%
+                endif %}><br>
+            Plot mask: <input type="checkbox" name="plot_mask" {% if plot_mask %}checked{% endif %}><br>
+            <input type="submit" value="Re-visuzlie" formaction="/re_visualize">
+        </div>
+
+        <div style="display: flex; gap: 20px;">
+        </div>
+
+        <div style="display: flex; gap: 20px;">
+            Mode: <select name="mode" value="{{ mode }}">
+                <option value="random_generate" {% if mode=="random_generate" %}selected{% endif %}>Random Generate
+                </option>
+                <option value="random_start_id" {% if mode=="random_start_id" %}selected{% endif %}>Random Start ID
+                </option>
+                <option value="chosen_id" {% if mode=="chosen_id" %}selected{% endif %}>The Chosen ID</option>
+                <option value="given_ids" {% if mode=="given_ids" %}selected{% endif %}>Given IDs</option>
+            </select><br>
+            Prefix (after edit, re-vis): <input type="text" name="prefix" value="{{ prefix }}"><br>
+            Region count list (sep by ,): <input type="text" name="region_cnt_ls" id="region_cnt_ls" value="{{ region_cnt_ls }}"><br>
+            <input type="submit" value="Visualize" formaction="/visualize">
+        </div>
+    </form>
+
+    <button id="download-all">Download All Images</button>
+
+    <script>
+        document.getElementById('download-all').addEventListener('click', function () {
+            var downloadLinks = document.querySelectorAll('.image-container a');
+
+            downloadLinks.forEach(function (link) {
+                var clickEvent = new MouseEvent('click');
+                link.dispatchEvent(clickEvent);
+            });
+            this.removeEventListener('click', downloadImages);
+        });
+    </script>
+
+    <div class="image-row">
+        {% for i in range(images|length) %}
+        <div class="image-container">
+            <img src="data:image/png;base64,{{ images[i][0] }}">
+            <br>
+            {{ prefix }}{{ images[i][1] }}
+            <!-- <a href="/download/{{ images[i][1] }}" download>Download</a>   -->
+            <a href="data:image/png;base64,{{ images[i][0] }}" download="{{ prefix }}{{ images[i][1] }}">Download</a>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+
+</html>

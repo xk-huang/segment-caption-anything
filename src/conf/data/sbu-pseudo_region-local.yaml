@@ -1,0 +1,6 @@
+defaults:
+  - base_sbu_pseudo_region_local
+  - _self_
+
+base_dir: '/mnt/onemodel/data_raw/sbu_captions/'  # As we need to load every images in the dir, mount loading is very slow
+base_annotations_dir: "/mnt/onemodel/data_raw/sbu_captions/annotations/"

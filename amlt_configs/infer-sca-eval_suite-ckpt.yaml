@@ -1,0 +1,133 @@
+env_defaults:
+
+  SHARED_CMD_ARGS: >-
+    -m src.train
+    +model=base_sca
+    training.do_train=False
+    training.do_eval=False
+    training.do_inference=True
+    training.fp16=True
+    wandb.log=False
+    training.dataloader_num_workers=4
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+
+
+
+
+
+environment:
+
+  image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: infer-eval_suite
+    sku: G$NUM_GPUS
+    preemptible: False
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - pip install pydantic==1.10.8  # https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471
+      - . amlt_configs/setup_eval_suite.sh
+      - . amlt_configs/setup_accelerate_on_azure.sh
+
+      # caption
+      - DATASET=vg-densecap-local
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      - DATASET=refcocog-google
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      - DATASET=refcoco-unc-split_testA
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      - DATASET=refcoco-unc-split_testB
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      - DATASET=refcoco+-unc-split_testA
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      - DATASET=refcoco+-unc-split_testB
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        $EXTRA_ARGS
+      - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # concept
+      # - DATASET=coco-instance
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # OOM and every slow
+      # - DATASET=objects365-local
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # OOM and every slow
+      # - DATASET=v3det-local
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+      container_args:
+        shm_size: 256g
+
+# CKPT_PATHS=(
+#     /mnt/blob/weights/sca-weights.111823/finetune-gpt2_large-lr_1e_4-1xlr-lsj-bs_1-pretrain_1e_4_no_lsj_bs_32.111223.rr1-4x8-v100-32g-pre/checkpoint-100000
+#     /mnt/blob/weights/sca-weights.111823/gpt2-large-lsj-1xlr.110423.octo-4x8-v100-16g-no_pre/checkpoint-200000
+#     /mnt/blob/weights/sca-weights.111823/ollm3bv2-large-lsj-1xlr.110423.octo-4x8-v100-16g-no_pre/checkpoint-200000
+#     /mnt/blob/weights/sca-weights.111823/pretrain_1e_4_no_lsj_bs_32.110523.rr1-4x8-v100-32g-pre/checkpoint-100000
+# )
+# for CKPT_PATH in ${CKPT_PATHS[@]} ; do
+#     CKPT_NAME=$(basename $(dirname $CKPT_PATH))
+#     echo $CKPT_NAME
+#     amlt run \
+#     -d "" --extra-args "training.generation_num_beams=3 training.fp16_full_eval=True model.model_name_or_path=$CKPT_PATH model.lm_head_model_name_or_path=\$(python scripts/tools/get_sub_model_name_from_ckpt.py $CKPT_PATH lm) model.sam_model_name_or_path=facebook/sam-vit-huge" \
+#     -t msroctovc -w msroctows --no-pre \
+#     --sku G4-V100 \
+#     amlt_configs/infer-sca-eval_suite-ckpt.yaml \
+#     :0=$CKPT_NAME \
+#     `date +"%m%d%y"`.infer-ckpt-all_dataset \
+#     -y
+# done

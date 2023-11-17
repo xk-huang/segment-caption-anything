@@ -1,0 +1,7 @@
+defaults:
+  - base_coco_instance_local
+  - _self_
+
+coco_zip_url: '/mnt/onemodel/data_raw/coco2017/'
+coco_annotations_zip_url: "/mnt/onemodel/data_raw/coco2017/"
+with_mask: False

@@ -1,0 +1,18 @@
+# https://huggingface.co/docs/transformers/v4.32.1/en/main_classes/trainer#using-accelerate-launcher-with-trainer
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_GPU
+downcast_bf16: 'no'
+gpu_ids: all
+machine_rank: 0  # change this for each node
+main_process_ip: node-0  # the machines on Azure is inter-connected, so you can directly config it according to `~/.ssh/config`
+main_process_port: 11451  # change this as you like
+main_training_function: main
+mixed_precision: fp16
+num_machines: 2  # change this for all nodes
+num_processes: 8  # changet this for all nodes. all the gpu processes among the nodes.
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false

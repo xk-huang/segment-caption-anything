@@ -1,0 +1,7 @@
+defaults:
+  - base_refcoco
+  - _self_
+
+name: refclef-unc
+base_url: 'path_to_your_dataset'
+sas_key: null

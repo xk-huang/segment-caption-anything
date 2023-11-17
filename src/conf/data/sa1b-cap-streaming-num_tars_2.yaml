@@ -1,0 +1,19 @@
+# NOET: We need it for backward compatibility of data config name
+defaults:
+  - base_sa1b_cap  # see src/arguments.py, group "data"
+  - _self_
+
+sa1b_tar_url: path_to_your_dataset
+sa1b_tar_template: "sa_{:06d}.tar"
+
+sa1b_annot_tsv_url: path_to_your_dataset
+sa1b_annot_template: "sa_{:06d}.tar.tsv"
+
+sa1b_cap_tsv_url: "path_to_your_dataset"
+sa1b_cap_template: "model_iter_0007189.pt.TaxXiaokeV2.test{}.crop384.crpPct1.fp16.gen.lenP0.6.beam4.predict.tsv"
+
+sa1b_filter_tsv_url: null
+sa1b_filter_template: null
+sa1b_file_range: 'range(0, 2)'
+
+streaming: true

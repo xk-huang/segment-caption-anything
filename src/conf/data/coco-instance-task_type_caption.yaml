@@ -1,0 +1,8 @@
+defaults:
+  - base_coco_instance
+  - _self_
+
+coco_zip_url: 'path_to_your_dataset'
+coco_annotations_zip_url: "path_to_your_dataset"
+with_mask: False
+task_type: caption

@@ -1,0 +1,143 @@
+env_defaults:
+
+
+  # NOTE: this kind of string leaded by > will append a new line to the end of the string
+  # Use base_sca_multitask_v2
+  # training.lr_scheduler_type=constant
+  SHARED_CMD_ARGS: >-
+    -m src.train
+    +model=base_sca_timm_multitask_v2
+    training.do_train=True
+    training.do_eval=True
+    training.do_inference=True
+    +data.streaming=False
+    training.max_eval_samples=800
+    training.max_steps=200000
+    training.fp16=True
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    training.save_strategy=steps
+    training.save_steps=5000
+    training.save_total_limit=3
+    training.optim=adamw_torch
+    training.evaluate_before_train=True
+    training.per_device_train_batch_size=1
+    training.evaluation_strategy=steps
+    training.eval_steps=5000
+    training.logging_steps=1000
+    training.logging_first_step=True
+    training.dataloader_num_workers=4
+    training.num_masks_per_sample=16
+    wandb.project=$AMLT_EXPERIMENT_NAME
+    wandb.name=$AMLT_JOB_NAME
+    model.num_caption_tokens=8
+    model.additional_num_hidden_layers=12
+    model.num_task_tokens=6
+    training.lr_scheduler_type=cosine
+    model.lm_head_model_name_or_path=gpt2-large
+    training.learning_rate=1e-4
+    training.weight_decay=1e-4
+    training.warmup_steps=200
+    training.warmup_ratio=0.33333333
+    training.compute_metrics=True
+
+
+
+environment:
+
+  image: nvidia/pytorch:23.07-py3 # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:23.06-py3  # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471 pip install pydantic==1.10.8; not support adamw_torch_fused, as it requires PyTorch 2.0 or higher
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: vit_base_patch32_clip_224.openai
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        model.sam_model_name_or_path=facebook/sam-vit-base
+        model.timm_vision_name=vit_base_patch32_clip_224.openai
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+# TIMM_NAME_LS=(
+#   vit_large_patch14_clip_336.openai
+#   vit_large_patch14_clip_224.datacompxl
+#   eva02_large_patch14_clip_336.merged2b
+# )
+# for TIMM_NAME in ${TIMM_NAME_LS[@]}; do
+#   amlt run -d ""  --extra-args "model.sam_model_name_or_path=facebook/sam-vit-$(echo $TIMM_NAME | cut -d '_' -f2) model.timm_vision_name=$TIMM_NAME" \
+#   -t itplabrr1cl1 -w resrchvc --no-pre \
+#   amlt_configs/train-sca-ablat-timm.yaml \
+#   :0=`date +"%m%d%y"`.octo-1x8-v100-16g-no_pre.$TIMM_NAME \
+#   112323.train-sca-ablat-timm
+# done
+
+# TIMM_NAME_LS=(
+#   vit_large_patch14_clip_336.openai
+#   vit_large_patch14_clip_224.datacompxl
+#   eva02_large_patch14_clip_336.merged2b
+# )
+# for TIMM_NAME in ${TIMM_NAME_LS[@]}; do
+#   amlt run -d ""  --extra-args "model.sam_model_name_or_path=facebook/sam-vit-$(echo $TIMM_NAME | cut -d '_' -f2) model.timm_vision_name=$TIMM_NAME training.trainable_params='[mask_decoder.additional_transformer,mask_decoder.caption_tokens,task_tokens,language_project,neck,mask_decoder.transformer]'" \
+#   -t itplabrr1cl1 -w resrchvc --no-pre \
+#   amlt_configs/train-sca-ablat-timm.yaml \
+#   :0=`date +"%m%d%y"`.rr1-1x8-v100-16g-no_pre.$TIMM_NAME-tune_sam_xformer \
+#   112323.train-sca-ablat-timm
+# done
+
+# TIMM_NAME_LS=(
+#   vit_large_patch16_224.mae
+#   vit_large_patch14_reg4_dinov2.lvd142m
+# )
+# for TIMM_NAME in ${TIMM_NAME_LS[@]}; do
+#   amlt run -d ""  --extra-args "model.sam_model_name_or_path=facebook/sam-vit-$(echo $TIMM_NAME | cut -d '_' -f2) model.timm_vision_name=$TIMM_NAME training.trainable_params='[mask_decoder.additional_transformer,mask_decoder.caption_tokens,task_tokens,language_project,neck,mask_decoder.transformer]'" \
+#   -t itplabrr1cl1 -w resrchvc --no-pre \
+#   amlt_configs/train-sca-ablat-timm.yaml \
+#   :0=`date +"%m%d%y"`.rr1-1x8-v100-16g-no_pre.$TIMM_NAME-tune_sam_xformer \
+#   112323.train-sca-ablat-timm
+# done
+
+# TIMM_NAME_LS=(
+#   vit_large_patch14_reg4_dinov2.lvd142m
+# )
+# for TIMM_NAME in ${TIMM_NAME_LS[@]}; do
+#   amlt run -d ""  --extra-args "model.sam_model_name_or_path=facebook/sam-vit-$(echo $TIMM_NAME | cut -d '_' -f2) model.timm_vision_name=$TIMM_NAME training.trainable_params='[mask_decoder.additional_transformer,mask_decoder.caption_tokens,task_tokens,language_project,neck,mask_decoder.transformer]'" \
+#   -t msroctovc -w msroctows --no-pre \
+#   amlt_configs/train-sca-ablat-timm.yaml \
+#   :0=`date +"%m%d%y"`.octo-1x8-v100-16g-no_pre.$TIMM_NAME-tune_sam_xformer \
+#   112323.train-sca-ablat-timm
+# done
+
+# TIMM_NAME_LS=(
+#   eva02_large_patch14_clip_336.merged2b
+# )
+# for TIMM_NAME in ${TIMM_NAME_LS[@]}; do
+#   amlt run -d ""  --extra-args "model.sam_model_name_or_path=facebook/sam-vit-$(echo $TIMM_NAME | cut -d '_' -f2) model.timm_vision_name=$TIMM_NAME" \
+#   -t msroctovc -w msroctows --no-pre \
+#   amlt_configs/train-sca-ablat-timm.yaml \
+#   :0=`date +"%m%d%y"`.octo-1x8-v100-16g-no_pre.$TIMM_NAME \
+#   112323.train-sca-ablat-timm
+# done

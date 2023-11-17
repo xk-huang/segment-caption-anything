@@ -1,0 +1,52 @@
+env_defaults:
+
+  SHARED_CMD_ARGS: '
+    -m src.train
+    train_data=[vg-densecap-region_descriptions] eval_data=[vg-densecap-region_descriptions]
+    +model=base_sam_captioner
+    training.do_train=False
+    training.do_eval=False
+    training.do_inference=True
+    training.num_masks_per_sample=1
+    +data.streaming=False
+    training.max_eval_samples=10
+    training.max_train_samples=1
+    training.num_train_epochs=10
+    training.fp16=True
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    training.dataloader_num_workers=4
+  '
+
+
+environment:
+
+  image: nvidia/pytorch:23.07-py3
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: sam_captioner-infer-debug
+    sku: G$NUM_GPUS
+    preemptible: False
+    process_count_per_node: 1  # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - . amlt_configs/post_process.sh
+      - accelerate launch --config_file amlt_configs/accelerate_config.yaml $SHARED_CMD_ARGS || . amlt_configs/post_process.sh
+      - . amlt_configs/post_process.sh
+
+      
+    submit_args:
+      env:
+        AZFUSE_USE_FUSE: "1"
+        SHARED_MEMORY_PERCENT: 0.5
+      container_args:
+        shm_size: 256g

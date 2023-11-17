@@ -1,0 +1,6 @@
+defaults:
+  - base_data_transforms  # see src/arguments.py, group "data"
+  - _self_
+
+min_scale: 0.1
+max_scale: 2.0

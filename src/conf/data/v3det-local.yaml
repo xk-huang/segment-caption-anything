@@ -1,0 +1,9 @@
+defaults:
+  - base_v3det_local
+  - _self_
+
+v3det_base_dir: "/mnt/onemodel/data_raw/V3Det/"
+v3det_base_annotations_dir: "/mnt/onemodel/data_raw/V3Det/annotations"
+with_mask: False
+
+streaming: False

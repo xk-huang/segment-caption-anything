@@ -1,0 +1,10 @@
+defaults:
+  - base_objects365_local
+  - _self_
+
+objects365_base_dir: "/mnt/aml/amldata/objects365_v2"
+objects365_base_annotations_dir: "/mnt/aml/amldata/objects365_v2"
+with_mask: False
+
+streaming: False
+task_type: caption

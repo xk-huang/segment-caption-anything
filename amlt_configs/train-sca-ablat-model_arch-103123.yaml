@@ -1,0 +1,112 @@
+env_defaults:
+
+
+  # NOTE: this kind of string leaded by > will append a new line to the end of the string
+  SHARED_CMD_ARGS: >-
+    -m src.train
+    training.do_train=True
+    training.do_eval=True
+    training.do_inference=True
+    training.max_eval_samples=800
+    training.max_steps=200000
+    training.fp16=True
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    training.save_strategy=steps
+    training.save_steps=5000
+    training.save_total_limit=3
+    training.optim=adamw_torch
+    training.evaluate_before_train=True
+    training.per_device_train_batch_size=1
+    training.evaluation_strategy=steps
+    training.eval_steps=5000
+    training.logging_steps=1000
+    training.logging_first_step=True
+    training.dataloader_num_workers=4
+    training.num_masks_per_sample=16
+    training.lr_scheduler_type=cosine
+    training.learning_rate=1e-4
+    training.weight_decay=1e-4
+    training.warmup_steps=200
+    training.warmup_ratio=0.33333333
+    training.compute_metrics=True
+    wandb.project=$AMLT_EXPERIMENT_NAME
+    wandb.name=$AMLT_JOB_NAME
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    model.num_task_tokens=6
+    model.lm_head_model_name_or_path=gpt2-large
+
+
+
+environment:
+
+  image: nvidia/pytorch:23.07-py3 # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:23.06-py3  # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471 pip install pydantic==1.10.8; not support adamw_torch_fused, as it requires PyTorch 2.0 or higher
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: gpt2-large
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        model.lm_head_model_name_or_path=gpt2-large
+        $EXTRA_ARGS
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+      container_args:
+        shm_size: 256g
+
+  - name: open_llama_3b_v2
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        model.lm_head_model_name_or_path=openlm-research/open_llama_3b_v2
+        training.gradient_checkpointing=true
+        $EXTRA_ARGS
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+      container_args:
+        shm_size: 256g
+
+
+# sing resrch 1x8
+# amlt run amlt_configs/train-sca-ablat-model_arch-103123.yaml :0=`date +"%m%d%y"`.octo-1x8-v100-16g-no_pre.gpt2-large-mtv2 train-sca-ablat-model_arch-103123 -d "" --extra-args "+model=base_sca_multitask_v2 model.num_caption_tokens=8 model.additional_num_hidden_layers=12" -t msroctovc -w msroctows --sku=G8-V100 --no-pre
+# amlt run amlt_configs/train-sca-ablat-model_arch-103123.yaml :0=`date +"%m%d%y"`.octo-1x8-v100-16g-no_pre.gpt2-large-sm train-sca-ablat-model_arch-103123 -d "" --extra-args "+model=base_sca_multitask_split_mixer model.num_caption_tokens=8 model.additional_num_hidden_layers=12" -t msroctovc -w msroctows --sku=G8-V100 --no-pre
+# sing octo 1x8 v100 16g
+# amlt run amlt_configs/train-sca-ablat-model_arch-103123.yaml :0=`date +"%m%d%y"`.octo-1x8-v100-16g-no_pre.gpt2-large-ddv2 train-sca-ablat-model_arch-103123 -d "" --extra-args "+model=base_sca_direct_decoding_v2 model.additional_num_hidden_layers=12" -t msroctovc -w msroctows --sku=G8-V100 --no-pre
+# amlt run -d "" --extra-args "+model=base_sca_multitask_roi_pool" -t msrresrchvc -w msrresrchws --sku=G8-V100 --no-pre amlt_configs/train-sca-ablat-model_arch-103123.yaml :0=`date +"%m%d%y"`.resrch-1x8-v100-16g-no_pre.gpt2-large-roi_pool train-sca-ablat-model_arch-103123
+# amlt run -d "" --extra-args "+model=base_sca_multitask_roi_pool model.vl_projector_type=mlp" -t msrresrchvc -w msrresrchws --sku=G8-V100 --no-pre amlt_configs/train-sca-ablat-model_arch-103123.yaml :0=`date +"%m%d%y"`.resrch-1x8-v100-16g-no_pre.gpt2-large-roi_pool-mlp train-sca-ablat-model_arch-103123 
+
+# Caveat:
+# 1. cannot add two "+model"
+# 2. base_sca_direct_decoding_v2 cannot add `num_caption_tokens`

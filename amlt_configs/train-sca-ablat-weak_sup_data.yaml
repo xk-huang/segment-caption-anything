@@ -1,0 +1,327 @@
+env_defaults:
+
+
+  # NOTE: this kind of string leaded by > will append a new line to the end of the string
+  # Use base_sca_multitask_v2
+  # training.lr_scheduler_type=constant
+  SHARED_CMD_ARGS: >-
+    -m src.train
+    +model=base_sca_multitask_v2
+    training.do_train=True
+    training.do_eval=True
+    training.do_inference=True
+    +data.streaming=False
+    training.max_eval_samples=800
+    training.max_steps=200000
+    training.fp16=True
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    training.save_strategy=steps
+    training.save_steps=5000
+    training.save_total_limit=3
+    training.optim=adamw_torch
+    training.evaluate_before_train=True
+    training.per_device_train_batch_size=1
+    training.evaluation_strategy=steps
+    training.eval_steps=5000
+    training.logging_steps=1000
+    training.logging_first_step=True
+    training.dataloader_num_workers=4
+    training.num_masks_per_sample=16
+    wandb.project=$AMLT_EXPERIMENT_NAME
+    wandb.name=$AMLT_JOB_NAME
+    model.num_caption_tokens=8
+    model.additional_num_hidden_layers=12
+    model.num_task_tokens=6
+    training.lr_scheduler_type=cosine
+    model.lm_head_model_name_or_path=gpt2-large
+    training.learning_rate=1e-4
+    training.weight_decay=1e-4
+    training.warmup_steps=200
+    training.warmup_ratio=0.33333333
+    training.compute_metrics=True
+
+
+
+environment:
+
+  image: nvidia/pytorch:23.07-py3 # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:23.06-py3  # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471 pip install pydantic==1.10.8; not support adamw_torch_fused, as it requires PyTorch 2.0 or higher
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: only-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+  - name: first-coco-then-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[coco-instance-task_type_caption-local]'
+        eval_data='[coco-instance-task_type_caption-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_1
+        wandb.name=$$AMLT_JOB_NAME-coco
+        $EXTRA_ARGS
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        model.model_name_or_path=$$(find $$AMLT_OUTPUT_DIR/stage_1 -name 'checkpoint*' | sort | tail -n1)
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+  - name: first-v3det-task_type_caption-local-then-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        $EXTRA_ARGS
+        train_data='[v3det-task_type_caption-local]'
+        eval_data='[coco-instance-task_type_caption-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_1
+        wandb.name=$$AMLT_JOB_NAME-v3det
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        model.model_name_or_path=$$(find $$AMLT_OUTPUT_DIR/stage_1 -name 'checkpoint*' | sort | tail -n1)
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+  - name: first-objects365-then-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[objects365-task_type_caption-local]'
+        eval_data='[coco-instance-task_type_caption-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_1
+        wandb.name=$$AMLT_JOB_NAME-objects365
+        $EXTRA_ARGS
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        model.model_name_or_path=$$(find $$AMLT_OUTPUT_DIR/stage_1 -name 'checkpoint*' | sort | tail -n1)
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+
+  - name: first-coco-v3det-task_type_caption-local-then-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        $EXTRA_ARGS
+        train_data='[coco-instance-task_type_caption-local,v3det-task_type_caption-local]'
+        train_data_interleave_probabilities='[117266,183348]'
+        eval_data='[coco-instance-task_type_caption-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_1
+        wandb.name=$$AMLT_JOB_NAME-v3det
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        model.model_name_or_path=$$(find $$AMLT_OUTPUT_DIR/stage_1 -name 'checkpoint*' | sort | tail -n1)
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+  - name: first-coco-v3det-objects365-then-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        $EXTRA_ARGS
+        train_data='[coco-instance-task_type_caption-local,v3det-task_type_caption-local,objects365-task_type_caption-local]'
+        train_data_interleave_probabilities='[117266,183348,1742289]'
+        eval_data='[coco-instance-task_type_caption-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_1
+        wandb.name=$$AMLT_JOB_NAME-v3det
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        model.model_name_or_path=$$(find $$AMLT_OUTPUT_DIR/stage_1 -name 'checkpoint*' | sort | tail -n1)
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+  - name: first-coco-objects365-then-vg
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        $EXTRA_ARGS
+        train_data='[coco-instance-task_type_caption-local,objects365-task_type_caption-local]'
+        train_data_interleave_probabilities='[117266,1742289]'
+        eval_data='[coco-instance-task_type_caption-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_1
+        wandb.name=$$AMLT_JOB_NAME-v3det
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[vg-densecap-local]'
+        eval_data='[vg-densecap-local]'
+        training.max_steps=100000
+        training.output_dir=$$AMLT_OUTPUT_DIR/stage_2
+        wandb.name=$$AMLT_JOB_NAME-vg
+        model.model_name_or_path=$$(find $$AMLT_OUTPUT_DIR/stage_1 -name 'checkpoint*' | sort | tail -n1)
+        $EXTRA_ARGS
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+
+# sing clusters, both octo and resrch failed
+# amlt run -d ""  \
+# -t msroctovc -w msroctows --no-pre \
+# amlt_configs/train-sca-ablat-weak_sup_data.yaml \
+# 112123.train-sca-ablat-weak_sup_data.octo
+
+# sing clusters, both octo and resrch failed
+# amlt run -d ""  \
+# -t msrresrchvc -w msrresrchws --no-pre \
+# amlt_configs/train-sca-ablat-weak_sup_data.yaml \
+# 112123.train-sca-ablat-weak_sup_data.resrch
+
+# amlt run -d ""  \
+# -t itplabrr1cl1 -w resrchvc --no-pre \
+# amlt_configs/train-sca-ablat-weak_sup_data.yaml \
+# 112123.train-sca-ablat-weak_sup_data.rr1
+
+# amlt run -d ""  \
+# -t msroctovc -w msroctows --no-pre \
+# amlt_configs/train-sca-ablat-weak_sup_data.yaml :first-coco-objects365-then-vg \
+# 112123.train-sca-ablat-weak_sup_data.rr1

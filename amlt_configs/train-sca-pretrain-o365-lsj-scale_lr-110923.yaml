@@ -1,0 +1,178 @@
+env_defaults:
+
+
+  # NOTE: this kind of string leaded by > will append a new line to the end of the string
+  SHARED_CMD_ARGS: >-
+    -m src.train
+    +model=base_sca_multitask_v2
+    training.do_train=True
+    training.do_eval=True
+    training.do_inference=True
+    +data.streaming=False
+    training.max_eval_samples=800
+    training.max_steps=200000
+    training.fp16=True
+    training.output_dir=$AMLT_OUTPUT_DIR
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    training.save_strategy=steps
+    training.save_steps=5000
+    training.save_total_limit=3
+    training.optim=adamw_torch
+    training.evaluate_before_train=True
+    training.per_device_train_batch_size=1
+    training.evaluation_strategy=steps
+    training.eval_steps=5000
+    training.logging_steps=1000
+    training.logging_first_step=True
+    training.dataloader_num_workers=4
+    training.num_masks_per_sample=16
+    wandb.project=$AMLT_EXPERIMENT_NAME
+    wandb.name=$AMLT_JOB_NAME
+    model.num_caption_tokens=8
+    model.additional_num_hidden_layers=12
+    model.num_task_tokens=6
+    training.lr_scheduler_type=cosine
+    model.lm_head_model_name_or_path=gpt2-large
+    training.learning_rate=1e-4
+    training.weight_decay=1e-4
+    training.warmup_steps=200
+    training.warmup_ratio=0.33333333
+    training.compute_metrics=True
+
+
+
+environment:
+
+  image: nvidia/pytorch:23.07-py3 # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:23.06-py3  # NCCL on PHLRR4076 cannot initialized successfully
+  # image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471 pip install pydantic==1.10.8; not support adamw_torch_fused, as it requires PyTorch 2.0 or higher
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: gpt2-large
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[objects365-task_type_caption-local]'
+        eval_data='[objects365-task_type_caption-local]'
+        model.lm_head_model_name_or_path=gpt2-large
+        $EXTRA_ARGS
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+  - name: open_llama_3b_v2
+    preemptible: True
+    sku: ${NUM_NODES}xG${NUM_GPUS}
+    process_count_per_node: 1 # Each node should run 1 process
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - . amlt_configs/setup_accelerate_on_azure.sh
+      - >-
+        accelerate launch --config_file amlt_configs/accelerate_deepspeed_config.yaml 
+        $SHARED_CMD_ARGS
+        train_data='[objects365-task_type_caption-local]'
+        eval_data='[objects365-task_type_caption-local]'
+        model.lm_head_model_name_or_path=openlm-research/open_llama_3b_v2
+        training.gradient_checkpointing=true
+        $EXTRA_ARGS
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+        HYDRA_FULL_ERROR: 1
+        # NCCL_IB_DISABLE: 1
+        # NCCL_IBEXT_DISABLE: 1
+      container_args:
+        shm_size: 256g
+
+
+
+
+# sing octo 4x8 no-pre lsj
+# amlt run -d "" --extra-args "+data_transforms=lsj-0_1-2_0 training.learning_rate=4e-4" -t msroctovc -w msroctows --sku=4xG8-V100 --no-pre amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml :1=`date +"%m%d%y"`.octo-4x8-v100-16g-no_pre.ollm3bv2-large-lsj-1xlr train-sca-pretrain-o365-lsj-scale_lr-110923
+# amlt run -d "" --extra-args "+data_transforms=lsj-0_1-2_0  training.learning_rate=4e-4" -t msroctovc -w msroctows --sku=4xG8-V100 --no-pre amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml :0=`date +"%m%d%y"`.octo-4x8-v100-16g-no_pre.gpt2-large-lsj-1xlr train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# amlt run -d "" --extra-args "training.learning_rate=4e-4" -t msroctovc -w msroctows --sku=4xG8-V100 --no-pre amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml :1=`date +"%m%d%y"`.octo-4x8-v100-16g-no_pre.ollm3bv2-large-no_lsj-1xlr train-sca-pretrain-o365-lsj-scale_lr-110923
+# amlt run -d "" --extra-args "training.learning_rate=4e-4" -t msroctovc -w msroctows --sku=4xG8-V100 --no-pre amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml :0=`date +"%m%d%y"`.octo-4x8-v100-16g-no_pre.gpt2-large-no_lsj-1xlr train-sca-pretrain-o365-lsj-scale_lr-110923
+
+
+# 4x8(x2) 
+# amlt run -d "" --extra-args "training.learning_rate=4e-4 training.per_device_train_batch_size=2" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :1=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre.ollm3bv2-large-no_lsj-1xlr-bs_2 \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# amlt run -d "" --extra-args "training.learning_rate=4e-4 training.per_device_train_batch_size=2" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :0=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre.gpt2-large-no_lsj-1xlr-bs_2 \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+
+# 4x8(x2), 1e-4
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=2" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :1=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre.ollm3bv2-large-no_lsj-0xlr-bs_64 \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# resume above due to node 4006 failed
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=2 training.resume_from_checkpoint=/mnt/blob/projects/sca-xiaoke-v3/amlt-results/7299942105.68600-95f56dfa-4b13-45bc-8d03-aad354819319/checkpoint-45000" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :1=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre.ollm3bv2-large-no_lsj-0xlr-bs_64.resume \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=2 /mnt/blob/projects/sca-xiaoke-v3/amlt-results/7299935921.15305-a115d837-dada-4074-b41d-f66e1b187cc1/checkpoint-60000" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :1=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre.ollm3bv2-large-no_lsj-0xlr-bs_64.resume.2 \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=2" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :0=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre.gpt2-large-no_lsj-0xlr-bs_64 \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=1" \
+# -t msroctovc -w msroctows --sku=8xG8-V100 --no-pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :0=`date +"%m%d%y"`.octo-8x8-v100-32g-pre.gpt2-large-no_lsj-0xlr-bs_64 \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+
+# resume above due to node 4006 failed
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=2" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :1=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre-no_ib.ollm3bv2-large-no_lsj-0xlr-bs_64.rerun \
+# train-sca-pretrain-o365-lsj-scale_lr-110923
+
+# amlt run -d "" --extra-args "training.learning_rate=1e-4 training.per_device_train_batch_size=2" \
+# -t itplabrr1cl1 -w resrchvc --sku=4xG8-V100 --pre \
+# amlt_configs/train-sca-pretrain-o365-lsj-scale_lr-110923.yaml \
+# :1=`date +"%m%d%y"`.rr1-4x8-v100-32g-pre-_ib.ollm3bv2-large-no_lsj-0xlr-bs_64.rerun \
+# train-sca-pretrain-o365-lsj-scale_lr-110923

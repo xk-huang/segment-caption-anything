@@ -1,0 +1,96 @@
+env_defaults:
+
+  SHARED_CMD_ARGS: >-
+    -m src.train
+    +model=base_sca
+    training.do_train=False
+    training.do_eval=False
+    training.do_inference=True
+    training.fp16=True
+    training.output_log_dir=$AMLT_LOGS_DIR
+    model.cache_dir=/mnt/blob/weights/.model.cache/
+    wandb.log=False
+    training.dataloader_num_workers=4
+
+
+
+
+environment:
+
+  image: nvidia/pytorch:22.12-py3  # Pydantic has bug: https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471
+  registry: nvcr.io
+
+code:
+  local_dir: $CONFIG_DIR/../
+
+
+
+jobs:
+  - name: infer-eval_suite
+    sku: G$NUM_GPUS
+    preemptible: False
+    command:
+      - . amlt_configs/setup.sh
+      - source ~/.bashrc
+      - pip install pydantic==1.10.8  # https://github.com/pydantic/pydantic/issues/545#issuecomment-1573776471
+      - . amlt_configs/setup_eval_suite.sh
+      - . amlt_configs/setup_accelerate_on_azure.sh
+
+      # get best (or max step) model
+      - BEST_CKPT_STEP=$$(python scripts/tools/get_model_name_from_trainer_state.py $$AMLT_MAP_INPUT_DIR "best")
+      - BEST_CKPT_PATH=$$(find $$AMLT_MAP_INPUT_DIR -name '*checkpoint*' | grep $$BEST_CKPT_STEP | tail -n1)
+
+      # caption
+      - DATASET=vg-densecap-region_descriptions
+      - >-
+        accelerate launch $SHARED_CMD_ARGS
+        train_data=[$$DATASET]
+        eval_data=[$$DATASET]
+        training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET
+        model.model_name_or_path=$$BEST_CKPT_PATH
+        model.lm_head_model_name_or_path=$$(python scripts/tools/get_sub_model_name_from_ckpt.py $$BEST_CKPT_PATH "lm")
+        model.sam_model_name_or_path=facebook/sam-vit-huge
+        $EXTRA_ARGS
+
+      - bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference /mnt/blob/data/sca-eval_suite-data/extract_region_img_annot_caption_to_tsv-vg-densecap-region_descriptions/region_img_annot_caption/visual_genome.py-region_descriptions_v1.2.0-test.region_img.tsv
+
+      # - DATASET=refcocog-google
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference /mnt/blob/data/sca-eval_suite-data/extract_region_img_annot_caption_to_tsv-refcocog-google/region_img_annot_caption/refcoco.py-refcocog-google-validation.region_img.tsv
+
+      # - DATASET=refcoco-unc-split_testA
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS 
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # - DATASET=refcoco-unc-split_testB
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # - DATASET=refcoco+-unc-split_testA
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS 
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # - DATASET=refcoco+-unc-split_testB
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS 
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # concept
+      # - DATASET=coco-instance
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # OOM and every slow
+      # - DATASET=objects365-local
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+      # OOM and every slow
+      # - DATASET=v3det-local
+      # - accelerate launch $SHARED_CMD_ARGS train_data=[$$DATASET] eval_data=[$$DATASET] training.output_dir=$$AMLT_OUTPUT_DIR/$$DATASET $EXTRA_ARGS
+      # - SKIP_CLIP_RECALL=1 bash scripts/tools/eval_suite.sh $$AMLT_OUTPUT_DIR/$$DATASET infer.json inference
+
+    submit_args:
+      env:
+        SHARED_MEMORY_PERCENT: 0.5
+      container_args:
+        shm_size: 256g

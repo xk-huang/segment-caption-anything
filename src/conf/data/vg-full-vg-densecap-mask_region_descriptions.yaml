@@ -1,0 +1,9 @@
+defaults:
+  - base_vg_densecap  # see src/arguments.py, group "data"
+  - _self_
+
+name: mask_region_descriptions_v0.0.1
+base_image_url: 'path_to_your_dataset'
+base_annotation_url: 'path_to_your_dataset'
+sas_key: null
+use_densecap_splits: False

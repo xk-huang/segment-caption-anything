@@ -1,0 +1,17 @@
+/exp*
+/tmp
+
+/.mypy_cache
+__pycache__/
+/build
+/data
+/results
+*.egg-info/
+scripts/examples/
+.amltconfig
+/amlt
+.*cache/
+wandb/
+
+build/
+*.egg-info/
