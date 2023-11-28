@@ -6,6 +6,10 @@ The repository contains the official implementation of "Segment and Caption Anyt
 
 ![teaser](./docs/teaser-github.svg)
 
+tl;dr
+1. SCA (b) is a lightweight augmentation of SAM (a) with the ability to generate regional captions.
+2. On top of SAM architecture, we add a fixed pre-trained language mode, and a optimizable lightweight hybrid feature mixture whose training is cheap and scalable.
+3. Despite the absence of semantic labels in the training data, SAM implies high-level semantics sufficient for captioning. 
 
 ## Environment Preparation
 
