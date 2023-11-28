@@ -279,15 +279,21 @@
                 <div class="hero-body">
                     <img id="teaser" width="120%" src="images/teaser-github.svg">
 
-                    <h2 class="subtitle has-text-centered">
-                        SCA (b) is a lightweight augmentation of SAM (a) with
-                        the ability to generate regional captions. On top of SAM architecture, we add a pre-trained language model which is frozen, and
-                        a lightweight hybrid feature mixture. Despite the small number
-                        of trainable parameters, the region-specific features are learned to
-                        align with the embedding space of the language model for regional
-                        caption generation.
-                    </h2>
-                </div>
+                    <div class="column is-centered">
+                    <div class="column is-five-fifths">
+                    <p class="subtitle">
+                        <b>tl;dr</b>
+                        <br>
+                        1. SCA (b) is a lightweight augmentation of SAM (a) with
+                        the ability to generate regional captions. 
+                        <br>
+                        2. On top of SAM architecture, we add a fixed pre-trained language mode, and
+                        a optimizable lightweight hybrid feature mixture whose training is cheap and scalable. 
+                        <br>
+                        3. Despite the absence of semantic labels in the training data, SAM implies high-level semantics sufficient for captioning. 
+                    </p>
+                    </div>
+                    </div>
             </div>
         </section>
 
@@ -355,7 +361,7 @@
                         <h2 class="title is-3">Performance</h2>
                         <div class="content has-text-justified">
                             <p>
-                                We conducted extensive experiments to validate the effectiveness of SCA. More examples can be found in
+                                We conducted extensive experiments to validate the effectiveness of SCA. More results and ablations can be found in
                                 our paper.
                             </p>
                         </div>
@@ -405,11 +411,11 @@
             </div> -->
                     <br>
                     <div class="container is-max-desktop">
-                        <h3 class="subtitle has-text-centered">
+                        <p>
                                 The qualitative results. SCA simultaneously predicts masks (in red contour) and captions. From top-to-bottom, the captions are
                                 from: (1) SAM+Captioner {GIT-large, BLIP-large, BLIP2-OPT-2.7B}, (2) GRIT [89], (3) SCA {GPT2-large+VG, LLAMA-3B+VG, GPT2-
                                 large+Pretrain+VG}, and (4) the ground truth. The bounding boxes (in red) are used to prompt the models. Click for a zoom-in view.
-                        </h3>
+                        </p>
                     </div>
                     <br>
                     <div class="container is-max-desktop">
