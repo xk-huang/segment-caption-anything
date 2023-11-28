@@ -2,6 +2,12 @@
 
 Please check `amlt_configs/` for the experiments configs.
 
+## Performance
+
+The major results can be found in [docs/MODEL_ZOO.md](./MODEL_ZOO.md) and our [Project Page](https://xk-huang.github.io/segment-caption-anything).
+
+We also provide evaluation code of our baseline ([Promptable-GRiT](https://github.com/xk-huang/Promptable-GRiT)) and [benchmark referring VLLMs](https://github.com/xk-huang/benchmark-referring-vllm).
+
 ## Evaluate with `vdtk`
 
 ### Install `vdtk`
