@@ -49,6 +49,15 @@
             margin: auto;
         }
 
+        /* Define the grid layout */
+        .mygrid_2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            grid-gap: 20px;
+            width: 80%;
+            margin: auto;
+        }
+
         .grid_item {
             background: #FFFFFF;
             opacity: 1;
@@ -284,13 +293,13 @@
                     <p class="subtitle">
                         <b>tl;dr</b>
                         <br>
-                        1. SCA (b) is a lightweight augmentation of SAM (a) with
+                        1. Despite the absence of semantic labels in the training data, SAM implies high-level semantics sufficient for captioning. 
+                        <br>
+                        2. SCA (b) is a lightweight augmentation of SAM (a) with
                         the ability to generate regional captions. 
                         <br>
-                        2. On top of SAM architecture, we add a fixed pre-trained language mode, and
+                        3. On top of SAM architecture, we add a fixed pre-trained language mode, and
                         a optimizable lightweight hybrid feature mixture whose training is cheap and scalable. 
-                        <br>
-                        3. Despite the absence of semantic labels in the training data, SAM implies high-level semantics sufficient for captioning. 
                     </p>
                     </div>
                     </div>
@@ -460,6 +469,57 @@
             <!--/ Paper video. -->
             </div>
         </section>
+
+
+            <!-- Paper video. -->
+            <div class="columns is-centered has-text-centered">
+                <div class="column is-six-fifths">
+                    <h2 class="title is-3">Demo</h2>
+                    <!-- <div class="publication-video">
+            <iframe src="https://user-images.githubusercontent.com/11957155/205432860-ef646e22-15fc-4527-8769-98df83381c09.mp4"
+                    frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            </div> -->
+                    <br>
+                    <div class="container is-max-desktop">
+                        <p>
+                            We provide a gradio demo for SCA with both "prompt mode" and "anything mode" in <a href="https://github.com/xk-huang/segment-caption-anything/blob/main/docs/DEMO.md">Gradio Demo</a>. Click for a zoom-in view. 
+                        </p>
+                    </div>
+                    <br>
+                    <div class="container is-max-desktop">
+                    <div class="column is-six-fifths mygrid_2">
+                        <div class="grid_item"><img class="mygif" src="images/demo/demo.small.jpg"></div>
+                        <div class="grid_item"><img class="mygif" src="images/demo/demo.small.2.jpg"></div>
+                        <div class="grid_item"><img class="mygif" src="images/demo/anything-mode-00.png.jpg"></div>
+                        <div class="grid_item"><img class="mygif" src="images/demo/anything-mode-03.png.jpg"></div>
+                        <div class="grid_item"><img class="mygif" src="images/demo/anything-mode-01.png.jpg"></div>
+                        <div class="grid_item"><img class="mygif" src="images/demo/anything-mode-02.png.jpg"></div>
+                        <!-- <img class="mygif" src="images/math.png">
+            <img class="mygif" src="images/squirrel_gpt4.png">
+            <img class="mygif" src="images/spatial.png">
+            <img class="mygif" src="images/recipe.png">
+            <img class="mygif" src="images/receipt.png">
+            <img class="mygif" src="images/table.png">
+            <img class="mygif" src="images/product.png">
+            <img class="mygif" src="images/celebrity.png">
+            <img class="mygif" src="images/mushroom.png"> -->
+                    </div>
+                    </div>
+
+                    <!-- <div id="myModal" class="modal">
+            <span class="close">&times;</span>
+            <img class="modal-content" id="modalImg">
+            </div> -->
+                    <div id="overlay" class="overlay">
+                        <span class="close">&times;</span>
+                        <div id="overlayContent"></div>
+                    </div>
+                </div>
+            </div>
+            <br>
+            <br>
+            <!--/ Paper video. -->
+            </div>
 
 
         <section class="section">
