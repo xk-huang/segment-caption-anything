@@ -11,6 +11,17 @@ tl;dr
 2. SCA (b) is a lightweight augmentation of SAM (a) with the ability to generate regional captions.
 3. On top of SAM architecture, we add a fixed pre-trained language mode, and a optimizable lightweight hybrid feature mixture whose training is cheap and scalable.
 
+<table>
+  <tr>
+    <td><img src="./docs/anything-mode-00.png.jpg" alt="anything-mode-00"></td>
+    <td><img src="./docs/anything-mode-03.png.jpg" alt="anything-mode-01"></td>
+  </tr>
+  <tr>
+    <td><img src="./docs/anything-mode-01.png.jpg" alt="anything-mode-02"></td>
+    <td><img src="./docs/anything-mode-02.png.jpg" alt="anything-mode-03"></td>
+  </tr>
+</table>
+
 ## Environment Preparation
 
 Please check [docs/ENV.md](docs/ENV.md).

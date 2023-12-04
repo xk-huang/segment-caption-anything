@@ -1,8 +1,26 @@
 ## Gradio App
 
-We provide a gradio demo for SCA:
+We provide a gradio demo for SCA with both "prompt mode" and "anything mode".
 
-![demo](./demo.small.jpg)
+<table>
+  <tr>
+    <td><img src="./demo.small.jpg" alt="demo.small.1"></td>
+    <td><img src="./demo.small.2.jpg" alt="demo.small.2"></td>
+  </tr>
+</table>
+
+Gallary of anything mode:
+
+<table>
+  <tr>
+    <td><img src="./anything-mode-00.png.jpg" alt="anything-mode-00"></td>
+    <td><img src="./anything-mode-03.png.jpg" alt="anything-mode-03"></td>
+  </tr>
+  <tr>
+    <td><img src="./anything-mode-01.png.jpg" alt="anything-mode-01"></td>
+    <td><img src="./anything-mode-02.png.jpg" alt="anything-mode-02"></td>
+  </tr>
+</table>
 
 ```shell
 CKPT_PATH=
