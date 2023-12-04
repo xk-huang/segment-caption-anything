@@ -1,6 +1,7 @@
 import sys
 
 sys.path.append(".")
+sys.path.append("./scripts/notebooks")
 
 import gradio as gr
 from src.models.sam_captioner import SAMCaptionerProcessor
@@ -9,6 +10,8 @@ from PIL import Image
 import requests
 import numpy as np
 import time
+import matplotlib.pyplot as plt
+import io
 
 
 import logging
@@ -25,6 +28,8 @@ from src.models.sca import ScaProcessor
 
 from transformers import set_seed
 from src.train import prepare_model
+from amcg import ScaAutomaticMaskCaptionGenerator
+
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +93,8 @@ NUM_OUTPUT_HEADS = 3
 LIBRARIES = ["multimask_output"]
 DEFAULT_LIBRARIES = ["multimask_output"]
 
+auto_mask_caption_generator = ScaAutomaticMaskCaptionGenerator(model, processor)
+
 
 def click_and_assign(args, visual_prompt_mode, input_point_text, input_boxes_text, evt: gr.SelectData):
     x, y = evt.index
@@ -111,6 +118,51 @@ def point_and_run(input_image, args, input_point_text):
     x, y = list(map(int, input_point_text.split(",")))
     input_points = [[[[x, y]]]]
     return run(args, input_image, input_points=input_points)
+
+
+def show_anns(anns):
+    if len(anns) == 0:
+        return
+    sorted_anns = sorted(anns, key=(lambda x: x["area"]), reverse=True)
+    ax = plt.gca()
+    ax.set_autoscale_on(False)
+
+    img = np.ones((sorted_anns[0]["segmentation"].shape[0], sorted_anns[0]["segmentation"].shape[1], 4))
+    img[:, :, 3] = 0
+    for ann in sorted_anns:
+        m = ann["segmentation"]
+        color_mask = np.concatenate([np.random.random(3), [0.35]])
+        img[m] = color_mask
+        if "caption" in ann:
+            captions: str = ann["caption"]
+            # calculate the centroid of the mask
+            y, x = np.where(m)
+            random_index = np.random.choice(range(len(x)))
+            random_position = (x[random_index], y[random_index])
+            # display the caption at the centroid of the mask
+            ax.text(*random_position, captions, color="white", fontsize=12, ha="center", va="center")
+    ax.imshow(img)
+
+
+def auto_mode(input_image):
+    np_input_image = np.array(input_image)
+    outputs = auto_mask_caption_generator.generate(np_input_image)
+
+    dpi = 80
+    height, width, _ = np_input_image.shape
+    figsize = width / float(dpi), height / float(dpi)
+
+    plt.figure(figsize=figsize)
+    plt.imshow(input_image)
+    show_anns(outputs)
+    plt.axis("off")
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    img = Image.open(buf)
+
+    return img
 
 
 def run(args, input_image, input_points=None, input_boxes=None):
@@ -181,19 +233,28 @@ def fake_click_and_run(input_image, args, evt: gr.SelectData):
 
 
 with gr.Blocks() as demo:
-    input_image = gr.Image(value=raw_image, label="Input Image", interactive=True, type="pil", height=500)
-    visual_prompt_mode = gr.Radio(choices=["point", "box"], value="point", label="Visual Prompt Mode")
-    args = gr.CheckboxGroup(choices=LIBRARIES, value=DEFAULT_LIBRARIES, label="SCA Arguments")
-    input_point_text = gr.Textbox(lines=1, label="Input Points (x,y)", value="0,0")
-    input_point_button = gr.Button(value="Run with Input Points")
-    input_boxes_text = gr.Textbox(lines=1, label="Input Boxes (x,y,x2,y2)", value="0,0,100,100")
-    input_boxes_button = gr.Button(value="Run with Input Boxes")
+    gr.Markdown("Welcome to the SCA Demo! We have two modes: **Prompt Mode** and **Anything Mode**.")
 
-    output_images = []
-    for i in range(NUM_OUTPUT_HEADS):
-        output_images.append(gr.AnnotatedImage(label=f"Output Image {i}", height=500))
-    for i in range(NUM_OUTPUT_HEADS):
-        output_images.append(gr.AnnotatedImage(label=f"Output Image {i}", height=500))
+    input_image = gr.Image(value=raw_image, label="Input Image", interactive=True, type="pil", height=500)
+
+    with gr.Tab("Prompt Mode"):
+        visual_prompt_mode = gr.Radio(choices=["point", "box"], value="point", label="Visual Prompt Mode")
+        args = gr.CheckboxGroup(choices=LIBRARIES, value=DEFAULT_LIBRARIES, label="SCA Arguments")
+        input_point_text = gr.Textbox(lines=1, label="Input Points (x,y)", value="0,0")
+        input_point_button = gr.Button(value="Run with Input Points")
+        input_boxes_text = gr.Textbox(lines=1, label="Input Boxes (x,y,x2,y2)", value="0,0,100,100")
+        input_boxes_button = gr.Button(value="Run with Input Boxes")
+
+        output_images = []
+        with gr.Row():
+            for i in range(NUM_OUTPUT_HEADS):
+                output_images.append(gr.AnnotatedImage(label=f"Output Image {i}", height=500))
+        with gr.Row():
+            for i in range(NUM_OUTPUT_HEADS):
+                output_images.append(gr.AnnotatedImage(label=f"Output Image {i}", height=500))
+    with gr.Tab("Anything Mode"):
+        run_anything_mode_button = gr.Button(value="Run Anything Mode")
+        output_image_for_anything_mode = gr.Image(value=raw_image, label="Output Image", interactive=False, type="pil")
 
     input_image.select(
         click_and_assign,
@@ -203,4 +264,5 @@ with gr.Blocks() as demo:
     input_point_button.click(point_and_run, [input_image, args, input_point_text], [*output_images])
     input_boxes_button.click(box_and_run, [input_image, args, input_boxes_text], [*output_images])
 
+    run_anything_mode_button.click(auto_mode, [input_image], [output_image_for_anything_mode])
 demo.launch()
