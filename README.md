@@ -2,7 +2,7 @@
 
 The repository contains the official implementation of "Segment and Caption Anything"
 
-[Project Page](https://xk-huang.github.io/segment-caption-anything), [Paper](https://xk-huang.github.io/segment-caption-anything)
+[Project Page](https://xk-huang.github.io/segment-caption-anything), [Paper](https://arxiv.org/abs/2312.00869)
 
 ![teaser](./docs/teaser-github.svg)
 
@@ -60,6 +60,7 @@ If you find this repository useful, please consider giving a star ⭐ and citati
   title={{Segment and Caption Anything}},
   author={Xiaoke, Huang and Jianfeng, Wang and Yansong, Tang and Zheng, Zhang and Han, Hu and Jiwen, Lu and Lijuan, Wang and Zicheng, Liu},
   journal={arXiv},
+  volume={abs/2312.00869},
   year={2023},
 }
 ```
