@@ -22,6 +22,10 @@ tl;dr
   </tr>
 </table>
 
+News
+
+- [12/05/2023] Release paper, code v0.0.1, and project page!
+
 ## Environment Preparation
 
 Please check [docs/ENV.md](docs/ENV.md).
