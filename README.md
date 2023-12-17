@@ -50,6 +50,9 @@ Please check [docs/USAGE.md](docs/USAGE.md).
 
 Please check [docs/EVAL.md](docs/EVAL.md)
 
+## License
+
+The trained weights are licensed under the [Apache 2.0 license](https://github.com/xk-huang/segment-caption-anything/blob/1c810bfcfeb3b95cd4b1f502f8f30c46333d58b8/LICENSE).
 
 ## Acknowledgement
 
