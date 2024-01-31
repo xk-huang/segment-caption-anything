@@ -24,7 +24,7 @@ tl;dr
 
 News
 
-- [01/31/2024] code v0.0.2: bump transformers to 4.36.2, support mistral series, phi-2, zephyr; add experiments about SAM+Image Captioner+[V-CoT](https://github.com/ttengwang/Caption-Anything), and more. update supp.
+- [01/31/2024] Update the [paper](https://xk-huang.github.io/segment-caption-anything/files/segment-caption-anything.013124.pdf) and the [supp](https://xk-huang.github.io/segment-caption-anything/files/segment-caption-anything-supp.013124.pdf). Release code v0.0.2: bump transformers to 4.36.2, support mistral series, phi-2, zephyr; add experiments about SAM+Image Captioner+[V-CoT](https://github.com/ttengwang/Caption-Anything), and more. 
 - [12/05/2023] Release paper, code v0.0.1, and project page!
 
 ## Environment Preparation
