@@ -21,8 +21,9 @@ conda create -n sca-v2 -y python=3.9
 conda activate sca-v2
 
 # https://pytorch.org/, pytorch 2.0.1 (as of 07/12/2023)
-conda install -y pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia
+conda install pytorch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 pytorch-cuda=11.8 -c pytorch -c nvidia
 pip install -r requirements.txt
+pip install -U datasets==2.16.1  # NotImplementedError(f"Loading a dataset cached in a {type(self._fs).__name__} is not supported.") https://github.com/huggingface/datasets/issues/6352
 ```
 
 For dev
