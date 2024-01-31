@@ -17,15 +17,20 @@ class SAMCaptionerConfig(PretrainedConfig):
         captioner_config = kwargs.pop("captioner", None)
         captioner_model_type = captioner_config.pop("model_type", None)
 
+        self.use_vcot = kwargs.pop("use_vcot", False)
+        self.dtype = kwargs.pop("dtype", "float32")
+
         self.sam = AutoConfig.for_model(sam_model_type, **sam_config)
         self.captioner = AutoConfig.for_model(captioner_model_type, **captioner_config)
 
     @classmethod
     def from_sam_captioner_configs(
-        cls, sam_config: PretrainedConfig, captioner_config: PretrainedConfig, **kwargs
+        cls, sam_config: PretrainedConfig, captioner_config: PretrainedConfig, dtype, use_vcot, **kwargs
     ) -> PretrainedConfig:
-        return cls(sam=sam_config.to_dict(), captioner=captioner_config.to_dict(), **kwargs)
-    
+        return cls(
+            sam=sam_config.to_dict(), captioner=captioner_config.to_dict(), dtype=dtype, use_vcot=use_vcot, **kwargs
+        )
+
     def to_dict(self):
         output = copy.deepcopy(self.__dict__)
         output["sam"] = self.sam.to_dict()

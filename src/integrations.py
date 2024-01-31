@@ -8,11 +8,21 @@ from transformers.trainer_callback import TrainerControl, TrainerState
 from transformers.training_args import TrainingArguments
 
 import wandb
-from transformers.integrations import TrainerCallback, WandbCallback
+from transformers.integrations import WandbCallback
 from transformers.utils import is_torch_tpu_available, logging
 from omegaconf import OmegaConf
 
 from .arguments import Arguments
+
+# NOTE: bump transformers from 4.30.2 to 4.36.2
+try:
+    from transformers.integrations import TrainerCallback
+except ImportError:
+    pass
+try:
+    from transformers.trainer_callback import TrainerCallback
+except ImportError:
+    pass
 
 logger = logging.get_logger(__name__)
 

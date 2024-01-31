@@ -5,7 +5,7 @@ from ..sam.processing_sam import SamProcessor
 from transformers.models.blip import BlipProcessor
 from transformers.processing_utils import ProcessorMixin
 from transformers.image_utils import make_list_of_images
-from transformers.models.auto.processing_auto import AutoProcessor
+from transformers import AutoTokenizer
 from transformers.tokenization_utils_base import (
     BatchEncoding,
     PaddingStrategy,
@@ -115,7 +115,7 @@ class ScaProcessor(ProcessorMixin):
             use_fast = False
         else:
             use_fast = True
-        captioner_processor = AutoProcessor.from_pretrained(
+        captioner_processor = AutoTokenizer.from_pretrained(
             text_pretrained_model_name_or_path, use_fast=use_fast, **kwargs
         )
         return cls(sam_processor, captioner_processor)

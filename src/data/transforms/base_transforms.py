@@ -357,8 +357,9 @@ class SCADataTransform(SamCaptionerDataTransform):
         # NOTE(xiaoke): add eos token
         # XXX(xiaoke): since we do not add the <BOS> token in both training and inference stage.
         # Therefore, we need to shift the labels to the right by one. However, this leads to the situation where labels have one more token than the input_ids,
-        # and the max_length of the labels is larger by 1 than tokeinizer.model_max_length, which cause error in trainer inference/eval due to mismatched last dim during cross-batch-region paddding.
+        # and the max_length of the labels is larger by 1 than tokeinizer.model_max_length, which cause error in trainer eval when compute eval loss due to mismatched last dim during cross-batch-region paddding.
         # Our solution is to trim the input_ids and attention_mask by 1.
+        # Check `src/data/collator.py:SCADataCollator:prepare_labels` for details.
         for i in range(len(outputs["input_ids"])):
             outputs["input_ids"][i] += [self.tokenizer.eos_token_id]
             outputs["attention_mask"][i] += [1]

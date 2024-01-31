@@ -46,6 +46,7 @@ import src.utils
 from transformers.trainer_utils import _re_checkpoint
 from transformers import set_seed
 import json
+import dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -99,47 +100,17 @@ def main(args: DictConfig) -> None:
     # Initialize our dataset and prepare it
     train_dataset, eval_dataset = prepare_datasets(args)
 
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        processor = SAMCaptionerProcessor.from_sam_captioner_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.captioner_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    # FIXME: when load weights from existing sca model, we should use the same tokenizer as the existing sca model
-    # model.lm_head_model_name_or_path=$(grep lm_head_model_name_or_path $AMLT_MAP_INPUT_DIR/.hydra/config.yaml | tail -n1 | sed 's/ *//g' | cut -d ':' -f2)
-    # model.sam_model_name_or_path=$(grep sam_model_name_or_path $AMLT_MAP_INPUT_DIR/.hydra/config.yaml | tail -n1 | sed 's/ *//g' | cut -d ':' -f2)
-    elif isinstance(model_args, SCAModelBaseArguments):
-        processor = ScaProcessor.from_sam_text_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.lm_head_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    else:
-        raise ValueError(
-            f"model_args must be one of [SAMCaptionerModelArguments, SCAModelBaseArguments], got {type(model_args)}"
-        )
-    # NOTE(xiaoke): add pad_token if not exists
-    if processor.tokenizer.pad_token is None:
-        if processor.tokenizer.eos_token is None:
-            raise ValueError("tokenizer must have either eos_token")
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    # NOTE(xiaoke): load sas_key from .env for huggingface model downloading.
+    logger.info(f"Try to load sas_key from .env file: {dotenv.load_dotenv('.env')}.")
+    use_auth_token = os.getenv("USE_AUTH_TOKEN", False)
+
+    processor = prepare_processor(model_args, use_auth_token)
 
     train_dataset, eval_dataset = prepare_data_transform(
         training_args, model_args, train_dataset, eval_dataset, processor
     )
 
-    # def collate_fn(examples):
-    #     pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    #     labels = torch.tensor([example["labels"] for example in examples])
-    #     return {"pixel_values": pixel_values, "labels": labels}
-    DataCollatorClass = None
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        DataCollatorClass = SamCaptionerDataCollator
-    elif isinstance(model_args, SCAModelBaseArguments):
-        DataCollatorClass = SCADataCollator
-    collate_fn = DataCollatorClass(processor.tokenizer)
+    collate_fn = prepare_collate_fn(training_args, model_args, processor)
 
     # Load the accuracy metric from the datasets package
     # metric = evaluate.load("accuracy")
@@ -180,7 +151,14 @@ def main(args: DictConfig) -> None:
     #     revision=model_args.model_revision,
     #     use_auth_token=True if model_args.use_auth_token else None,
     # )
-    model = prepare_model(model_args)
+    model = prepare_model(model_args, use_auth_token)
+    if hasattr(model, "language_model") and model.language_model.config.bos_token_id is None:
+        model.language_model.config.bos_token_id = processor.tokenizer.bos_token_id
+        logger.warning(f"Set bos_token_id in language_model to {processor.tokenizer.bos_token_id}")
+    if hasattr(model, "language_model") and model.language_model.config.eos_token_id is None:
+        model.language_model.config.eos_token_id = processor.tokenizer.eos_token_id
+        logger.warning(f"Set eos_token_id in language_model to {processor.tokenizer.eos_token_id}")
+
     prepare_model_trainable_parameters(model, args)
 
     # Initalize our trainer
@@ -224,6 +202,16 @@ def main(args: DictConfig) -> None:
     if training_args.do_inference:
         for eval_dataset_k, eval_dataset_v in eval_dataset.items():
             trainer.inference(eval_dataset_v, metric_key_prefix=eval_dataset_k)
+
+
+def prepare_collate_fn(training_args, model_args, processor):
+    DataCollatorClass = None
+    if isinstance(model_args, SAMCaptionerModelArguments):
+        DataCollatorClass = SamCaptionerDataCollator
+    elif isinstance(model_args, SCAModelBaseArguments):
+        DataCollatorClass = SCADataCollator
+    collate_fn = DataCollatorClass(processor.tokenizer)
+    return collate_fn
 
 
 def prepare_data_transform(training_args, model_args, train_dataset, eval_dataset, processor):
@@ -305,11 +293,17 @@ def prepare_model_trainable_parameters(model, args):
         logger.info(f"Set {param_name} to trainable")
 
 
-def prepare_model(model_args):
+def prepare_model(model_args, use_auth_token=False):
     if isinstance(model_args, SAMCaptionerModelArguments):
         model_args: SAMCaptionerModelArguments
         model = SAMCaptionerModel.from_sam_captioner_pretrained(
-            model_args.sam_model_name_or_path, model_args.captioner_model_name_or_path, cache_dir=model_args.cache_dir
+            model_args.sam_model_name_or_path,
+            model_args.captioner_model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            use_auth_token=use_auth_token,
+            trust_remote_code=True,
+            dtype=model_args.dtype,
+            use_vcot=model_args.use_vcot,
         )
     elif isinstance(model_args, SCAModelBaseArguments):
         model_args: SCAModelBaseArguments
@@ -332,6 +326,8 @@ def prepare_model(model_args):
                     model_args.additional_num_hidden_layers,
                     model_args.num_caption_tokens,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, SCADirectDecodingModelArguments):
                 model = ScaDirectDecodingModel.from_sam_text_pretrained(
@@ -339,6 +335,8 @@ def prepare_model(model_args):
                     model_args.lm_head_model_name_or_path,
                     model_args.additional_num_hidden_layers,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, SCAMultitaskModelArguments):
                 model = ScaMultitaskModel.from_sam_text_pretrained(
@@ -348,6 +346,8 @@ def prepare_model(model_args):
                     model_args.num_caption_tokens,
                     model_args.num_task_tokens,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, ScaMultitaskV2ModelArguments):
                 model = ScaMultitaskV2Model.from_sam_text_pretrained(
@@ -358,6 +358,8 @@ def prepare_model(model_args):
                     model_args.num_task_tokens,
                     model_args.num_caption_heads,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, SCAMultitaskSplitMixerModelArguments):
                 model = ScaMultitaskSplitMixerModel.from_sam_text_pretrained(
@@ -368,6 +370,8 @@ def prepare_model(model_args):
                     model_args.num_task_tokens,
                     model_args.num_caption_heads,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, SCADirectDecodingV2ModelArguments):
                 model = ScaDirectDecodingV2Model.from_sam_text_pretrained(
@@ -376,6 +380,8 @@ def prepare_model(model_args):
                     model_args.additional_num_hidden_layers,
                     model_args.num_task_tokens,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, SCAMultitaskROIPoolModelArguments):
                 model = ScaMultitaskROIPoolModel.from_sam_text_pretrained(
@@ -385,6 +391,8 @@ def prepare_model(model_args):
                     vl_projector_type=model_args.vl_projector_type,
                     vl_projector_norm_type=model_args.vl_projector_norm_type,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             elif isinstance(model_args, ScaTimmMultitaskV2ModelArguments):
                 timm_vision_name = getattr(model_args, "timm_vision_name", None)
@@ -398,6 +406,8 @@ def prepare_model(model_args):
                     model_args.num_task_tokens,
                     model_args.num_caption_heads,
                     cache_dir=model_args.cache_dir,
+                    use_auth_token=use_auth_token,
+                    trust_remote_code=True,
                 )
             else:
                 raise ValueError(
@@ -422,6 +432,157 @@ def prepare_model(model_args):
         raise ValueError(
             f"model_args must be one of [SAMCaptionerModelArguments, SCAModelBaseArguments], got {model_args}"
         )
+
+    if (
+        hasattr(model_args, "lm_head_model_name_or_path")
+        and model_args.lm_head_model_name_or_path == "microsoft/phi-2"
+    ):
+        # NOTE: phi cannot take in input_embeds, so we need to add it.
+        # https://huggingface.co/microsoft/phi-2/blob/main/modeling_phi.py
+        logger.warning("phi-2 cannot take in input_embeds, so we need to add it.")
+
+        import types
+
+        def phi_forward_updated(
+            self,
+            input_ids=None,
+            inputs_embeds=None,
+            past_key_values=None,
+            attention_mask=None,
+        ):
+            if input_ids is not None and inputs_embeds is not None:
+                raise ValueError("You cannot specify both input_ids and inputs_embeds at the same time")
+            if input_ids is not None:
+                hidden_states = self.embd(input_ids)
+            elif inputs_embeds is not None:
+                hidden_states = inputs_embeds
+            else:
+                raise ValueError("You have to specify either input_ids or inputs_embeds")
+            for layer in self.h:
+                hidden_states = layer(
+                    hidden_states,
+                    past_key_values=past_key_values,
+                    attention_mask=attention_mask,
+                )
+
+            return hidden_states
+
+        # NOTE: replace the method on the fly. It's soooo good.
+        # https://stackoverflow.com/questions/52292599/can-i-replace-an-existing-method-of-an-object-in-python
+        model.language_model.transformer.forward = types.MethodType(
+            phi_forward_updated, model.language_model.transformer
+        )
+
+        from transformers.modeling_outputs import CausalLMOutputWithPast
+
+        def phi_forinput_ids_causal_lm_forward_updated(
+            self,
+            input_ids=None,
+            inputs_embeds=None,
+            past_key_values=None,
+            attention_mask=None,
+            labels=None,
+            **kwargs,
+        ):
+            hidden_states = self.transformer(
+                input_ids, inputs_embeds, past_key_values=past_key_values, attention_mask=attention_mask
+            )
+            lm_logits = self.lm_head(hidden_states)
+
+            loss = None
+            if labels is not None:
+                loss = self.loss(lm_logits, labels)
+
+            return CausalLMOutputWithPast(loss=loss, logits=lm_logits, past_key_values=past_key_values)
+
+        # NOTE: replace the method on the fly. It's soooo good.
+        # https://stackoverflow.com/questions/52292599/can-i-replace-an-existing-method-of-an-object-in-python
+        model.language_model.forward = types.MethodType(
+            phi_forinput_ids_causal_lm_forward_updated, model.language_model
+        )
+
+        import torch
+        from dataclasses import dataclass, field
+        from typing import Any, Dict
+
+        @dataclass
+        class InferenceParams:
+            """Inference parameters passed to model to efficiently calculate
+            and store context during inference.
+            Reference:
+                https://github.com/Dao-AILab/flash-attention/blob/main/flash_attn/utils/generation.py.
+            Args:
+                max_seqlen: Maximum sequence length.
+                max_batch_size: Maximum batch size.
+                seqlen_offset: Sequence length offset.
+                batch_size_offset: Batch size offset.
+                key_value_memory_dict: Key value memory dictionary.
+                lengths_per_sample: Lengths per sample.
+            """
+
+            max_seqlen: int = field(metadata={"help": "Maximum sequence length."})
+
+            max_batch_size: int = field(metadata={"help": "Maximum batch size."})
+
+            seqlen_offset: int = field(default=0, metadata={"help": "Sequence length offset."})
+
+            batch_size_offset: int = field(default=0, metadata={"help": "Batch size offset."})
+
+            key_value_memory_dict: Dict[str, Any] = field(
+                default_factory=dict, metadata={"help": "Key value memory dictionary."}
+            )
+
+            lengths_per_sample: torch.Tensor = field(default=None, metadata={"help": "Lengths per sample."})
+
+        def phi_prepare_inputs_for_generation(
+            self,
+            input_ids=None,
+            inputs_embeds=None,
+            past_key_values=None,
+            attention_mask=None,
+            **kwargs,
+        ):
+            model_inputs = {}
+            # NOTE: src/transformers/models/deprecated/open_llama/modeling_open_llama.py:prepare_inputs_for_generation
+            # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
+            # Then the kvs are cached (by `past_key_values`) and subsequent steps will use.
+            # After the frist step, we only need to use `input_ids`
+            if inputs_embeds is not None and past_key_values is None:
+                model_inputs["inputs_embeds"] = inputs_embeds
+
+            if past_key_values is None or not (isinstance(past_key_values, InferenceParams)):
+                past_key_values = InferenceParams(
+                    max_seqlen=self.config.n_positions,
+                    max_batch_size=input_ids.shape[0],
+                    seqlen_offset=0,
+                    batch_size_offset=0,
+                    key_value_memory_dict={},
+                    lengths_per_sample=None,
+                )
+            else:
+                # Assume that `past_key_values` has cached all tokens up to the last token in `input_ids`
+                # NOTE: if use inputs_embeds, we use attention_mask to get the seqlen_offset
+                past_key_values.seqlen_offset = attention_mask.shape[1] - 1
+                input_ids = input_ids[:, -1].unsqueeze(-1)
+
+            if "inputs_embeds" not in model_inputs:
+                model_inputs["input_ids"] = input_ids
+
+            model_inputs.update(
+                {
+                    "past_key_values": past_key_values,
+                    "attention_mask": attention_mask,
+                }
+            )
+
+            return model_inputs
+
+        # NOTE: replace the method on the fly. It's soooo good.
+        # https://stackoverflow.com/questions/52292599/can-i-replace-an-existing-method-of-an-object-in-python
+        model.language_model.prepare_inputs_for_generation = types.MethodType(
+            phi_prepare_inputs_for_generation, model.language_model
+        )
+
     logger.info(f"Model: {model.config}")
     return model
 
@@ -554,6 +715,40 @@ def _get_data_name(dataset_config_dict):
     name = dataset_config_dict.name
     split = dataset_config_dict.split
     return f"{path_name}-{name}-{split}"
+
+
+def prepare_processor(model_args, use_auth_token):
+    if isinstance(model_args, SAMCaptionerModelArguments):
+        processor = SAMCaptionerProcessor.from_sam_captioner_pretrained(
+            model_args.sam_model_name_or_path,
+            model_args.captioner_model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            model_max_length=model_args.model_max_length,
+            use_auth_token=use_auth_token,
+            trust_remote_code=True,
+        )
+    # NOTE: when load weights from existing sca model, we should use the same tokenizer as the existing sca model
+    # use `python scripts/tools/get_sub_model_name_from_ckpt.py $$BEST_CKPT_PATH $MODEL_TYPE` to get the model_type.
+    elif isinstance(model_args, SCAModelBaseArguments):
+        processor = ScaProcessor.from_sam_text_pretrained(
+            model_args.sam_model_name_or_path,
+            model_args.lm_head_model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            model_max_length=model_args.model_max_length,
+            use_auth_token=use_auth_token,
+            trust_remote_code=True,
+        )
+    else:
+        raise ValueError(
+            f"model_args must be one of [SAMCaptionerModelArguments, SCAModelBaseArguments], got {type(model_args)}"
+        )
+    # NOTE(xiaoke): add pad_token if not exists
+    if processor.tokenizer.pad_token is None:
+        if processor.tokenizer.eos_token is None:
+            raise ValueError("tokenizer must have either eos_token")
+        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+
+    return processor
 
 
 if __name__ == "__main__":

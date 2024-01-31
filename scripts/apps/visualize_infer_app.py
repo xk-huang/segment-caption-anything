@@ -343,7 +343,8 @@ class MultiInferJson(torch.utils.data.Dataset):
             """
             )
             count = cursor.fetchone()[0]
-            assert count == self._len, f"mask_db_file length not match, {count} != {self._len}"
+            if count != self._len:
+                print(f"mask_db_file length not match, {count} != {self._len}")
             conn.close()
 
     def __len__(self):
@@ -483,13 +484,17 @@ for k, v in infer_json_path_dict.items():
 for job_name, score_json_path in tqdm.tqdm(score_json_path_dict.items()):
     print(f"[score json] job_name: {job_name}")
     print(f"[score json] is exists: {os.path.exists(score_json_path)}")
-    assert os.path.exists(score_json_path), f"{score_json_path} not exists"
+    if not os.path.exists(score_json_path):
+        print(f"{score_json_path} not exists")
 
 
 score_json_dict = {}
 for k, v in score_json_path_dict.items():
-    with open(v, "r") as f:
-        score_json_dict[k] = json.load(f)
+    try:
+        with open(v, "r") as f:
+            score_json_dict[k] = json.load(f)
+    except FileNotFoundError:
+        print(f"{v} not found")
 
 
 def build_score_df(score_json_dict):

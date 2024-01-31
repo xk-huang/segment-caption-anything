@@ -6,49 +6,14 @@ import logging
 import os
 
 import hydra
-from hydra.utils import instantiate
-from datasets import Dataset, load_dataset, IterableDataset, concatenate_datasets, interleave_datasets
 from omegaconf import DictConfig, OmegaConf
-from src.data.transforms import SamCaptionerDataTransform, SCADataTransform
-from src.data.collator import SamCaptionerDataCollator, SCADataCollator
 from src.arguments import (
-    Arguments,
     global_setup,
-    SAMCaptionerModelArguments,
-    SCAModelBaseArguments,
-    SCAModelArguments,
-    SCADirectDecodingModelArguments,
-    SCAMultitaskModelArguments,
-    SCAMultitaskSplitMixerModelArguments,
-    ScaMultitaskV2ModelArguments,
-    VGDenseCapDataArgument,
-    RefCOCODataArgument,
-    SA1BCapDataArgument,
-    COCOInstanceDataArgument,
-    SCADirectDecodingV2ModelArguments,
-    SCAMultitaskROIPoolModelArguments,
 )
-from src.models.sam_captioner import SAMCaptionerConfig, SAMCaptionerModel, SAMCaptionerProcessor
-from src.sca_seq2seq_trainer import SCASeq2SeqTrainer, get_parameter_by_name
-from src.models.sca import (
-    ScaModel,
-    ScaConfig,
-    ScaProcessor,
-    ScaDirectDecodingModel,
-    ScaMultitaskModel,
-    ScaMultitaskSplitMixerModel,
-    ScaMultitaskV2Model,
-    ScaDirectDecodingV2Model,
-    ScaMultitaskROIPoolModel,
-)
-from src.integrations import CustomWandbCallBack, EvaluateFirstStepCallback, LoggerCallback, EvalLossCallback
-import src.models.sca
-import src.utils
 
-from transformers.trainer_utils import _re_checkpoint
 from transformers import set_seed
 import json
-from src.train import prepare_datasets, prepare_data_transform
+from src.train import prepare_datasets, prepare_data_transform, prepare_processor, prepare_collate_fn
 from transformers import SamModel
 import torch
 from collections.abc import Mapping
@@ -59,6 +24,7 @@ import pycocotools.mask
 import sqlite3
 from contextlib import closing
 import multiprocessing as mp
+import dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -76,43 +42,17 @@ def main(args: DictConfig) -> None:
     # Initialize our dataset and prepare it
     train_dataset, eval_dataset = prepare_datasets(args)
 
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        processor = SAMCaptionerProcessor.from_sam_captioner_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.captioner_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    # FIXME: when load weights from existing sca model, we should use the same tokenizer as the existing sca model
-    # model.lm_head_model_name_or_path=$(grep lm_head_model_name_or_path $AMLT_MAP_INPUT_DIR/.hydra/config.yaml | tail -n1 | sed 's/ *//g' | cut -d ':' -f2)
-    # model.sam_model_name_or_path=$(grep sam_model_name_or_path $AMLT_MAP_INPUT_DIR/.hydra/config.yaml | tail -n1 | sed 's/ *//g' | cut -d ':' -f2)
-    elif isinstance(model_args, SCAModelBaseArguments):
-        processor = ScaProcessor.from_sam_text_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.lm_head_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    else:
-        raise ValueError(
-            f"model_args must be one of [SAMCaptionerModelArguments, SCAModelBaseArguments], got {type(model_args)}"
-        )
-    # NOTE(xiaoke): add pad_token if not exists
-    if processor.tokenizer.pad_token is None:
-        if processor.tokenizer.eos_token is None:
-            raise ValueError("tokenizer must have either eos_token")
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    # NOTE(xiaoke): load sas_key from .env for huggingface model downloading.
+    logger.info(f"Try to load sas_key from .env file: {dotenv.load_dotenv('.env')}.")
+    use_auth_token = os.getenv("USE_AUTH_TOKEN", False)
+
+    processor = prepare_processor(model_args, use_auth_token)
 
     train_dataset, eval_dataset = prepare_data_transform(
         training_args, model_args, train_dataset, eval_dataset, processor
     )
 
-    DataCollatorClass = None
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        DataCollatorClass = SamCaptionerDataCollator
-    elif isinstance(model_args, SCAModelBaseArguments):
-        DataCollatorClass = SCADataCollator
-    collate_fn = DataCollatorClass(processor.tokenizer)
+    collate_fn = prepare_collate_fn(training_args, model_args, processor)
 
     compute_metrics = training_args.compute_metrics
     if compute_metrics is not True:

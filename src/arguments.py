@@ -67,7 +67,14 @@ class SCATrainingArguments(TrainingArguments):
     compute_metrics: Optional[bool] = field(default=None)
 
     # Apply large-scale jittering and random flip augmentations for training
+    # NOTE: To support multiple level of config override. Check `src/conf/conf.yaml` and `src/arguments.py:SCASeq2SeqTrainingArguments`
+    # https://github.com/facebookresearch/tava/blob/a9576801e81aebcf242588be39315e27f915894e/configs/nerf_dyn.yaml#L61C10-L61C10c
     data_transforms: Optional[Any] = field(default=None)
+
+    # Apply instrutions in the data collator.
+    # NOTE: To support multiple level of config override. Check `src/conf/conf.yaml` and `src/arguments.py:SCASeq2SeqTrainingArguments`
+    # https://github.com/facebookresearch/tava/blob/a9576801e81aebcf242588be39315e27f915894e/configs/nerf_dyn.yaml#L61C10-L61C10c
+    data_collator: Optional[Any] = field(default=None)
 
     # Save strategies
     # NOTE: by default, we save two checkpoint, one for best, the other for last
@@ -80,6 +87,11 @@ class SCATrainingArguments(TrainingArguments):
 
     # NOTE: chunk inference to reduce memory usage
     generate_chunk_size: Optional[int] = field(default=None)
+
+    # NOTE: Ablate prompt types on VG.
+    prompt_types_to_ablate_on_vg: Optional[str] = field(
+        default=None
+    )  # e.g., "certer_point_in_box, random_point_in_box, random_point_in_mask"
 
     _run_post_init: bool = field(default=False)
 
@@ -106,12 +118,14 @@ class SCATrainingArguments(TrainingArguments):
 @dataclass
 class _Seq2SeqTrainingArguments(Seq2SeqTrainingArguments):
     # OmegaConf doesn't support Union, so we need to use Any
-    # version 4.30.2
-    generation_config: Any
     # version 4.32.0
     debug: Any
-    sharded_ddp: Any
     fsdp: Any
+    # version 4.30.2
+    generation_config: Any
+    # version 4.36.2
+    neftune_noise_alpha: Any = None
+    sharded_ddp: Any = ""  # Removed in 4.36.2
 
 
 @dataclass
@@ -129,6 +143,8 @@ class ModelArguments:
 class SAMCaptionerModelArguments(ModelArguments):
     sam_model_name_or_path: str = field(default="facebook/sam-vit-huge")
     captioner_model_name_or_path: str = field(default="Salesforce/blip-image-captioning-base")
+    dtype: str = field(default="float16")
+    use_vcot: bool = field(default=False)
 
 
 @dataclass
@@ -388,11 +404,23 @@ class WandbArguments:
 
 @dataclass
 class DataTransformsArguments:
+    """
+    NOTE: used to control large-scale jittering data augmentation.
+    """
+
     min_scale: float = 0.1
     max_scale: float = 2.0
     image_size: int = 1024
 
 
+@dataclass
+class DataCollatorClass:
+    use_instruction: bool = field(default=False)
+    # NOTE: We have two kinds of tasks so far: `captioning` and `recognition`.
+    instruction_mapping_json: Optional[str] = field(default=None)
+
+
+# NOTE: Useless, since all the node are initialized the same as `base_*`.
 defaults = [{"wandb": "base_wandb"}]
 
 
@@ -421,7 +449,13 @@ class Arguments:
     model: ModelArguments = field(default_factory=ModelArguments)
     wandb: WandbArguments = field(default_factory=WandbArguments)
 
+    # NOTE: To support multiple level of config override. Check `src/conf/conf.yaml` and `src/arguments.py:SCASeq2SeqTrainingArguments`
+    # https://github.com/facebookresearch/tava/blob/a9576801e81aebcf242588be39315e27f915894e/configs/nerf_dyn.yaml#L61C10-L61C10c
     data_transforms: Optional[DataTransformsArguments] = field(default=None)
+
+    # NOTE: To support multiple level of config override. Check `src/conf/conf.yaml` and `src/arguments.py:SCASeq2SeqTrainingArguments`
+    # https://github.com/facebookresearch/tava/blob/a9576801e81aebcf242588be39315e27f915894e/configs/nerf_dyn.yaml#L61C10-L61C10c
+    data_collator: DataCollatorClass = field(default_factory=DataCollatorClass)
 
 
 cs = ConfigStore.instance()
@@ -454,6 +488,8 @@ cs.store(group="model", name="base_sca_timm_multitask_v2", node=ScaTimmMultitask
 cs.store(group="wandb", name="base_wandb", node=WandbArguments)
 
 cs.store(group="data_transforms", name="base_data_transforms", node=DataTransformsArguments)
+
+cs.store(group="data_collator", name="base_data_collator", node=DataCollatorClass)
 
 
 def global_setup(

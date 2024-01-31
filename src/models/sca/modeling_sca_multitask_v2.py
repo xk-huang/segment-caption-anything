@@ -875,7 +875,12 @@ class ScaMultitaskV2Model(ScaMultitaskPretrainedModel):
         # NOTE: Most language models in HF supprots gradient checkpointing
         # e.g., OpenLLAMA: https://github.com/huggingface/transformers/blob/5a4f340df74b42b594aedf60199eea95cdb9bed0/src/transformers/models/deprecated/open_llama/modeling_open_llama.py#L464C9-L464C36
         # gpt2: https://github.com/huggingface/transformers/blob/5a4f340df74b42b594aedf60199eea95cdb9bed0/src/transformers/models/gpt2/modeling_gpt2.py#L483C9-L483C36
-        self.language_model._set_gradient_checkpointing(module, value=value)
+
+        # NOTE: bump transformers from 4.30.2 to 4.36.2
+        try:
+            self.language_model._set_gradient_checkpointing(module, value=value)
+        except TypeError:
+            self.language_model._set_gradient_checkpointing(enable=value)
 
         # NOTE: SAM vision encoder supports gradient checkponit
         # https://github.com/huggingface/transformers/blob/5a4f340df74b42b594aedf60199eea95cdb9bed0/src/transformers/models/sam/modeling_sam.py#L1012C14-L1012C37

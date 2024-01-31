@@ -63,6 +63,7 @@ class ScaConfig(PretrainedConfig):
         prompt_encoder_config=None,
         mask_caption_decoder_config=None,
         text_config=None,
+        text_config_cls=None,
         initializer_range=0.02,
         # NOTE: for recoginition pretrain
         num_task_tokens: int = 6,
@@ -82,13 +83,28 @@ class ScaConfig(PretrainedConfig):
             self.mask_caption_decoder_config = mask_caption_decoder_config.to_dict()
 
         text_model_type = text_config["model_type"] if "model_type" in text_config else "gpt2"
-        # NOTE(xiaoke): use_decoder_only_language_model only return the model class like GPT2, rather the task model class
-        # like GPT2forCausalLM. We need the task model class to load the pretrained weights for the task.
-        self.text_config = CONFIG_MAPPING[text_model_type](**text_config)
+        try:
+            # NOTE(xiaoke): use_decoder_only_language_model only return the model class like GPT2, rather the task model class
+            # like GPT2forCausalLM. We need the task model class to load the pretrained weights for the task.
+            self.text_config = CONFIG_MAPPING[text_model_type](**text_config)
+        except KeyError:
+            if text_config_cls is None:
+                raise ValueError(f"Unrecognized text model type: {text_model_type}")
+            logger.warning(f"use external config cls: {text_config_cls} for text model type: {text_model_type}")
+            self.text_config = text_config_cls(**text_config)
 
         self.tie_word_embeddings = self.text_config.tie_word_embeddings
         self.is_encoder_decoder = self.text_config.is_encoder_decoder
         self.use_decoder_only_language_model = self.text_config.model_type in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+
+        if self.use_decoder_only_language_model is False:
+            # NOTE: External models like stablelm-zephyr-3b is not in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.
+            # We need to check the architecture name to see if it is a decoder only language model.
+            if len(text_config["architectures"]) > 1:
+                raise ValueError(f"Only support one architecture in text_config, got {text_config['architectures']}")
+            lm_architecture = text_config["architectures"][0]
+            if lm_architecture.endswith("ForCausalLM"):
+                self.use_decoder_only_language_model = True
 
         self.vision_config = SamVisionConfig(**vision_config)
         self.prompt_encoder_config = SamPromptEncoderConfig(**prompt_encoder_config)
@@ -148,6 +164,7 @@ class ScaConfig(PretrainedConfig):
                 "num_caption_heads": num_caption_heads,
             },
             text_config=text_config.to_dict() if text_config is not None else None,
+            text_config_cls=type(text_config) if text_config is not None else None,
             num_task_tokens=num_task_tokens,
             vl_projector_type=vl_projector_type,
             vl_projector_norm_type=vl_projector_norm_type,

@@ -4,7 +4,6 @@ sys.path.append(".")
 sys.path.append("./scripts/notebooks")
 
 import gradio as gr
-from src.models.sam_captioner import SAMCaptionerProcessor
 import torch
 from PIL import Image
 import requests
@@ -15,21 +14,18 @@ import io
 
 
 import logging
+import os
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from src.arguments import (
     global_setup,
-    SAMCaptionerModelArguments,
-    SCAModelBaseArguments,
 )
-from src.models.sam_captioner import SAMCaptionerProcessor
-from src.models.sca import ScaProcessor
 
 from transformers import set_seed
-from src.train import prepare_model
+from src.train import prepare_model, prepare_processor
 from amcg import ScaAutomaticMaskCaptionGenerator
-
+import dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -48,31 +44,13 @@ def main(args: DictConfig) -> None:
     # Set seed before initializing model.
     set_seed(args.training.seed)
 
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        processor = SAMCaptionerProcessor.from_sam_captioner_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.captioner_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    elif isinstance(model_args, SCAModelBaseArguments):
-        processor = ScaProcessor.from_sam_text_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.lm_head_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    else:
-        raise ValueError(
-            f"model_args must be one of [SAMCaptionerModelArguments, SCAModelBaseArguments], got {type(model_args)}"
-        )
-    # NOTE(xiaoke): add pad_token if not exists
-    if processor.tokenizer.pad_token is None:
-        if processor.tokenizer.eos_token is None:
-            raise ValueError("tokenizer must have either eos_token")
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    # NOTE(xiaoke): load sas_key from .env for huggingface model downloading.
+    logger.info(f"Try to load sas_key from .env file: {dotenv.load_dotenv('.env')}.")
+    use_auth_token = os.getenv("USE_AUTH_TOKEN", False)
 
-    model = prepare_model(model_args)
+    processor = prepare_processor(model_args, use_auth_token)
+
+    model = prepare_model(model_args, use_auth_token)
     return model, processor
 
 
@@ -81,11 +59,23 @@ if __name__ == "__main__":
 
 cache_dir = ".model.cache"
 device = "cuda" if torch.cuda.is_available() else "cpu"
+# sam_model = "facebook/sam-vit-huge"
+# captioner_model = "Salesforce/blip-image-captioning-base"
+# captioner_model = "microsoft/git-large"
+# captioner_model = "Salesforce/blip2-opt-2.7b"
+clip_model = "openai/clip-vit-base-patch32"
 
-img_url = "https://segment-anything.com/assets/gallery/AdobeStock_94274587_welsh_corgi_pembroke_CD.jpg"
+img_url = "https://raw.githubusercontent.com/facebookresearch/segment-anything/main/notebooks/images/truck.jpg"
 raw_image = Image.open(requests.get(img_url, stream=True).raw)
 
 model = model.to(device)
+
+# sam_processor = processor.sam_processor
+# captioner_processor = processor.captioner_processor
+
+# clip = CLIPModel.from_pretrained(clip_model, cache_dir=cache_dir).to(device)
+# clip_processor = CLIPProcessor.from_pretrained(clip_model, cache_dir=cache_dir)
+# NOTE(xiaoke): in original clip, dtype is float16, here we use float32 as hf default
 dtype = model.dtype
 
 
@@ -213,6 +203,24 @@ def run(args, input_image, input_points=None, input_boxes=None):
         output = [np.ones((1, 1)), []]
         outputs.append(output)
 
+        # if return_patches:
+        #     # (batch_size(1), region_size(1), num_heads)
+        #     patches = patches[0][0]
+        #     num_patches = len(patches)
+        #     for i in range(num_patches):
+        #         patch = patches[i]
+        #         caption = captions[i]
+        #         # https://huggingface.co/openai/clip-vit-base-patch32
+        #         clip_inputs = clip_processor(text=[caption], images=[patch], return_tensors="pt", padding=True).to(device)
+        #         clip_outputs = clip(**clip_inputs)
+        #         logits_per_image = clip_outputs.logits_per_image
+
+        #         output = [patches[i], [[[0, 0, 0, 0], f"{caption}|clip{logits_per_image.item():.4f}"]]]
+        #         outputs.append(output)
+        #     for i in range(num_patches, NUM_OUTPUT_HEADS):
+        #         output = [np.ones((1, 1)), []]
+        #         outputs.append(output)
+        # else:
     for i in range(NUM_OUTPUT_HEADS):
         output = [np.ones((1, 1)), []]
         outputs.append(output)
@@ -254,7 +262,9 @@ with gr.Blocks() as demo:
                 output_images.append(gr.AnnotatedImage(label=f"Output Image {i}", height=500))
     with gr.Tab("Anything Mode"):
         run_anything_mode_button = gr.Button(value="Run Anything Mode")
-        output_image_for_anything_mode = gr.Image(value=raw_image, label="Output Image", interactive=False, type="pil")
+        output_image_for_anything_mode = gr.Image(
+            value=raw_image, label="Output Image", interactive=False, type="pil", height=500
+        )
 
     input_image.select(
         click_and_assign,
@@ -265,4 +275,5 @@ with gr.Blocks() as demo:
     input_boxes_button.click(box_and_run, [input_image, args, input_boxes_text], [*output_images])
 
     run_anything_mode_button.click(auto_mode, [input_image], [output_image_for_anything_mode])
+
 demo.launch()

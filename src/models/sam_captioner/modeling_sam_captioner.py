@@ -3,6 +3,7 @@ import os
 import tempfile
 from typing import Optional, Tuple, Union, List, Dict, Mapping, Sequence
 from dataclasses import dataclass
+import string
 
 import torch
 from torch import nn
@@ -145,6 +146,12 @@ class SAMCaptionerModel(PreTrainedModel):
             self.generation_config = generation_config
             logger.info(f"generation_config: {generation_config} is used for `generate`")
 
+        # NOTE: external args:
+        self.use_vcot = config.use_vcot
+        if self.sam.dtype != self.captioner.dtype:
+            raise ValueError(f"sam.dtype: {self.sam.dtype} != captioner.dtype: {self.captioner.dtype}")
+        self.torch_dtype = self.sam.dtype
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *model_args, **kwargs):
         return super().from_pretrained(pretrained_model_name_or_path, *model_args, **kwargs)
@@ -154,15 +161,21 @@ class SAMCaptionerModel(PreTrainedModel):
         cls,
         sam_pretrained_model_name_or_path: str = None,
         captioner_pretrained_model_name_or_path: str = None,
+        dtype: Optional[torch.dtype] = None,
+        use_vcot: Optional[bool] = None,
         **kwargs,
     ) -> PreTrainedModel:
+        if dtype not in ["float32", "float16"]:
+            raise ValueError(f"dtype: {dtype} has to be either float32 or float16")
+        torch_dtype = torch.float32 if dtype == "float32" else torch.float16
+
         sam_config = AutoConfig.from_pretrained(sam_pretrained_model_name_or_path, **kwargs)
         sam_architectures = sam_config.architectures
         if len(sam_architectures) != 1:
             logger.warning(f"sam_architectures: {sam_architectures} has to be of length 1")
         sam_architecture = sam_architectures[0]
         sam_module = getattr(transformers, sam_architecture)
-        sam = sam_module.from_pretrained(sam_pretrained_model_name_or_path, **kwargs)
+        sam = sam_module.from_pretrained(sam_pretrained_model_name_or_path, torch_dtype=torch_dtype, **kwargs)
 
         captioner_config = AutoConfig.from_pretrained(captioner_pretrained_model_name_or_path, **kwargs)
         # NOTE(xiaoke): load architecture from config, or the model architecture will not be initialized correctly
@@ -171,10 +184,12 @@ class SAMCaptionerModel(PreTrainedModel):
             logger.warning(f"captioner_architectures: {caption_architectures} has to be of length 1")
         captioner_architecture = caption_architectures[0]
         captioner_module = getattr(transformers, captioner_architecture)
-        captioner = captioner_module.from_pretrained(captioner_pretrained_model_name_or_path, **kwargs)
+        captioner = captioner_module.from_pretrained(
+            captioner_pretrained_model_name_or_path, torch_dtype=torch_dtype, **kwargs
+        )
 
         # instantiate config with corresponding kwargs
-        config = SAMCaptionerConfig.from_sam_captioner_configs(sam.config, captioner.config, **kwargs)
+        config = SAMCaptionerConfig.from_sam_captioner_configs(sam.config, captioner.config, dtype, use_vcot, **kwargs)
 
         # make sure input & output embeddings is not tied
         config.tie_word_embeddings = False
@@ -281,8 +296,10 @@ class SAMCaptionerModel(PreTrainedModel):
 
         # FIXME(xiaoke): for loop is slow
         patches = []
+        patches_wo_bg = []
         batch_size, num_masks, num_heads, *_ = pred_masks.shape
         for batch_idx, (image, masks) in enumerate(zip(images, batch_masks)):
+            numpy_image = np.array(image)
             masks = masks.flatten(0, 1)
             for mask_idx, mask in enumerate(masks):
                 if (~mask).all():
@@ -305,9 +322,15 @@ class SAMCaptionerModel(PreTrainedModel):
             # NOTE(xiaoke): PIL.Image.crop will pad the patch if the box is larger than the image.
             boxes[:, 2] = torch.maximum(boxes[:, 0] + 2, boxes[:, 2])
             boxes[:, 3] = torch.maximum(boxes[:, 1] + 2, boxes[:, 3])
+
             boxes = boxes.cpu().numpy()
-            for box in boxes:
+            masks = masks.cpu().numpy()
+            for box, mask in zip(boxes, masks):
                 patches.append(image.crop(box))
+                masked_image = numpy_image.copy()
+                masked_image[~mask] = 255
+                masked_image = Image.fromarray(masked_image)
+                patches_wo_bg.append(masked_image.crop(box))
         del pred_masks
         del batch_masks
 
@@ -316,10 +339,14 @@ class SAMCaptionerModel(PreTrainedModel):
 
         if chunkified_forward_size is None:
             logger.debug(f"chunkified_forward_size is not provided, we use 16 as default.")
-            chunkified_forward_size = 16
-        # NOTE(xiaoke): the captioner's processor can have either images & text arguement signature or text & images arguement signature
-        captioner_inputs = self.captioner_processor(images=patches, return_tensors="pt").to(self.device)
+            chunkified_forward_size = 64
+
         if mode == "train":
+            # NOTE(xiaoke): the captioner's processor can have either images & text arguement signature or text & images arguement signature
+            captioner_inputs = self.captioner_processor(images=patches, return_tensors="pt").to(
+                self.device, dtype=self.torch_dtype
+            )
+
             # num_heads is either 1 or num_heads in SAM
             input_ids = input_ids.unsqueeze(-2).repeat_interleave(num_heads, dim=-2).flatten(0, 2)
             attention_mask = attention_mask.unsqueeze(-2).repeat_interleave(num_heads, dim=-2).flatten(0, 2)
@@ -354,15 +381,52 @@ class SAMCaptionerModel(PreTrainedModel):
             #   - captioner_inputs:
             #       - pixel_values torch.Size([batch_size*num_masks*num_heads, 3, h, w])
             #   - kwargs: {'max_length': 20, 'num_beams': 1, 'synced_gpus': False}
-            captioner_generate_ids: torch.LongTensor = self._chunkify_forward(
-                self.captioner.generate, chunkified_forward_size, **captioner_inputs, **kwargs
-            )
+            if not self.use_vcot:
+                # NOTE(xiaoke): the captioner's processor can have either images & text arguement signature or text & images arguement signature
+                captioner_inputs = self.captioner_processor(images=patches, return_tensors="pt").to(
+                    self.device, dtype=self.torch_dtype
+                )
+                captioner_generate_ids: torch.LongTensor = self._chunkify_forward(
+                    self.captioner.generate, chunkified_forward_size, **captioner_inputs, **kwargs
+                )
+            else:
+                # NOTE(xiaoke): the captioner's processor can have either images & text arguement signature or text & images arguement signature
+                num_patches = len(patches_wo_bg)
+                templates = ["What is this?"] * num_patches
+
+                captioner_inputs = self.captioner_processor(
+                    images=patches_wo_bg, text=templates, return_tensors="pt"
+                ).to(self.device, dtype=self.torch_dtype)
+                captioner_generate_ids: torch.LongTensor = self._chunkify_forward(
+                    self.captioner.generate, chunkified_forward_size, **captioner_inputs, **kwargs
+                )
+                try:
+                    num_tokens = captioner_generate_ids.shape[-1]
+                except Exception as e:
+                    captioner_generate_ids = captioner_generate_ids["sequences"]
+                    num_tokens = captioner_generate_ids.shape[-1]
+
+                answers = self.captioner_processor.batch_decode(captioner_generate_ids, skip_special_tokens=True)
+                answers = [i.strip().translate(str.maketrans("", "", string.punctuation)) for i in answers]
+                templates = [
+                    f"Describe the {i} in the image." if i != "" else "Describe the region in the image."
+                    for i in answers
+                ]
+
+                captioner_inputs = self.captioner_processor(
+                    images=patches, text=templates, return_tensors="pt", padding=True
+                ).to(self.device, dtype=self.torch_dtype)
+                captioner_generate_ids: torch.LongTensor = self._chunkify_forward(
+                    self.captioner.generate, chunkified_forward_size, **captioner_inputs, **kwargs
+                )
+
             # TODO: fix this hack and figure out what is the output format for each captioner.
             try:
                 num_tokens = captioner_generate_ids.shape[-1]
             except Exception as e:
                 captioner_generate_ids = captioner_generate_ids["sequences"]
                 num_tokens = captioner_generate_ids.shape[-1]
+
             captioner_generate_ids = captioner_generate_ids.view(batch_size, num_masks, num_heads, num_tokens)
             sam_captioner_output["sequences"] = captioner_generate_ids
 

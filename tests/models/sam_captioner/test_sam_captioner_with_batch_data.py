@@ -21,8 +21,9 @@ from transformers import set_seed, Trainer
 import gradio as gr
 from dataclasses import dataclass
 from hydra import initialize, compose
-from src.train import prepare_datasets, prepare_model, prepare_data_transform
+from src.train import prepare_datasets, prepare_model, prepare_data_transform, prepare_processor
 from datasets import Dataset, IterableDataset
+import dotenv
 
 
 logger = logging.getLogger(__name__)
@@ -72,17 +73,11 @@ def main(args: DictConfig) -> None:
     # Initialize our dataset and prepare it
     train_dataset, eval_dataset = prepare_datasets(args)
 
-    processor = SAMCaptionerProcessor.from_sam_captioner_pretrained(
-        model_args.sam_model_name_or_path,
-        model_args.captioner_model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        model_max_length=model_args.model_max_length,
-    )
-    # NOTE(xiaoke): add pad_token if not exists
-    if processor.tokenizer.pad_token is None:
-        if processor.tokenizer.eos_token is None:
-            raise ValueError("tokenizer must have either eos_token")
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    # NOTE(xiaoke): load sas_key from .env for huggingface model downloading.
+    logger.info(f"Try to load sas_key from .env file: {dotenv.load_dotenv('.env')}.")
+    use_auth_token = os.getenv("USE_AUTH_TOKEN", False)
+
+    processor = prepare_processor(model_args, use_auth_token)
 
     train_dataset, eval_dataset = prepare_data_transform(
         training_args, model_args, train_dataset, eval_dataset, processor
@@ -95,7 +90,7 @@ def main(args: DictConfig) -> None:
 
     collate_fn = SamCaptionerDataCollator(processor.tokenizer)
 
-    model = prepare_model(model_args)
+    model = prepare_model(model_args, use_auth_token)
 
     def cycle(iterable):
         while True:

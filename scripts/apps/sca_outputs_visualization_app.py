@@ -4,35 +4,23 @@ sys.path.append(".")
 
 import logging
 import os
-from typing import Optional, Dict
+from typing import Optional
 
 import hydra
 import torch
-from hydra.utils import instantiate
-from datasets import DatasetDict, load_dataset, IterableDatasetDict
 from omegaconf import DictConfig, OmegaConf
-from src.data.transforms import SamCaptionerDataTransform, SCADataTransform
-from src.data.collator import SamCaptionerDataCollator, SCADataCollator
 from src.arguments import (
-    Arguments,
     global_setup,
     SAMCaptionerModelArguments,
-    SCAModelArguments,
-    SCAModelBaseArguments,
-    SCADirectDecodingModelArguments,
-    SCAMultitaskModelArguments,
 )
-from src.models.sam_captioner import SAMCaptionerConfig, SAMCaptionerModel, SAMCaptionerProcessor
-from src.models.sca import ScaProcessor, ScaModel, ScaDirectDecodingModel, ScaMultitaskModel
 
 from transformers.trainer_utils import get_last_checkpoint
-from transformers import set_seed, Trainer
+from transformers import set_seed
 import gradio as gr
 from dataclasses import dataclass
 import numpy as np
-import datasets
-from datasets import Dataset, IterableDataset
-from src.train import prepare_datasets, prepare_model, prepare_data_transform
+from src.train import prepare_datasets, prepare_model, prepare_data_transform, prepare_processor, prepare_collate_fn
+import dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -65,29 +53,11 @@ def main(args: DictConfig) -> None:
     # Initialize our dataset and prepare it
     train_dataset, eval_dataset = prepare_datasets(args)
 
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        processor = SAMCaptionerProcessor.from_sam_captioner_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.captioner_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    elif isinstance(model_args, SCAModelBaseArguments):
-        processor = ScaProcessor.from_sam_text_pretrained(
-            model_args.sam_model_name_or_path,
-            model_args.lm_head_model_name_or_path,
-            cache_dir=model_args.cache_dir,
-            model_max_length=model_args.model_max_length,
-        )
-    else:
-        raise ValueError(
-            f"model_args must be one of [SAMCaptionerModelArguments, SCAModelBaseArguments], got {type(model_args)}"
-        )
-    # NOTE(xiaoke): add pad_token if not exists
-    if processor.tokenizer.pad_token is None:
-        if processor.tokenizer.eos_token is None:
-            raise ValueError("tokenizer must have either eos_token")
-        processor.tokenizer.pad_token = processor.tokenizer.eos_token
+    # NOTE(xiaoke): load sas_key from .env for huggingface model downloading.
+    logger.info(f"Try to load sas_key from .env file: {dotenv.load_dotenv('.env')}.")
+    use_auth_token = os.getenv("USE_AUTH_TOKEN", False)
+
+    processor = prepare_processor(model_args, use_auth_token)
 
     train_dataset, eval_dataset = prepare_data_transform(
         training_args, model_args, train_dataset, eval_dataset, processor
@@ -96,16 +66,7 @@ def main(args: DictConfig) -> None:
         raise ValueError(f"Only support one eval dataset, but got {len(eval_dataset)}. args: {args.eval_data}")
     eval_dataset = next(iter(eval_dataset.values()))
 
-    # def collate_fn(examples):
-    #     pixel_values = torch.stack([example["pixel_values"] for example in examples])
-    #     labels = torch.tensor([example["labels"] for example in examples])
-    #     return {"pixel_values": pixel_values, "labels": labels}
-    DataCollatorClass = None
-    if isinstance(model_args, SAMCaptionerModelArguments):
-        DataCollatorClass = SamCaptionerDataCollator
-    elif isinstance(model_args, SCAModelBaseArguments):
-        DataCollatorClass = SCADataCollator
-    collate_fn = DataCollatorClass(processor.tokenizer)
+    collate_fn = prepare_collate_fn(training_args, model_args, processor)
 
     # Load the accuracy metric from the datasets package
     # metric = evaluate.load("accuracy")
@@ -142,7 +103,7 @@ def main(args: DictConfig) -> None:
     #     revision=model_args.model_revision,
     #     use_auth_token=True if model_args.use_auth_token else None,
     # )
-    model = prepare_model(model_args)
+    model = prepare_model(model_args, use_auth_token)
 
     def cycle(iterable):
         while True:

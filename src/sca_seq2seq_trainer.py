@@ -26,7 +26,6 @@ from transformers.trainer import (
     is_torch_tpu_available,
     has_length,
     find_batch_size,
-    is_deepspeed_zero3_enabled,
     nested_concat,
     nested_numpify,
     IterableDatasetShard,
@@ -36,21 +35,17 @@ from transformers.trainer import (
     get_parameter_names,
     ALL_LAYERNORM_LAYERS,
     Trainer,
-    ShardedDDPOption,
-    nested_truncate,
     EvalPrediction,
     TrainerState,
     deepspeed_load_checkpoint,
     get_model_param_count,
     TRAINER_STATE_NAME,
     skip_first_batches,
-    tqdm,
     sys,
     HPSearchBackend,
     hp_params,
     RandomSampler,
     is_torch_less_than_1_11,
-    DistributedSampler,
     ParallelMode,
     dist,
     shutil,
@@ -60,7 +55,6 @@ from transformers.trainer import (
     SCALER_NAME,
     reissue_pt_warnings,
 )
-from transformers.trainer_callback import TrainerCallback
 from functools import wraps
 from collections import defaultdict
 
@@ -82,6 +76,24 @@ except ImportError:
     pass
 try:
     from transformers.trainer import OSS
+except ImportError:
+    pass
+# NOTE: bump transformers from 4.30.2 to 4.36.2
+try:
+    from transformers.trainer import (
+        ShardedDDPOption,
+        nested_truncate,
+        tqdm,
+        DistributedSampler,
+    )
+except ImportError:
+    pass
+try:
+    from transformers.trainer_callback import TrainerCallback
+except ImportError:
+    pass
+try:
+    from transformers.trainer_seq2seq import is_deepspeed_zero3_enabled
 except ImportError:
     pass
 
@@ -175,6 +187,10 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
         else:
             self.compute_metrics_func = None
 
+        # NOTE: bump transformers from 4.30.2 to 4.36.2
+        if not hasattr(self, "is_fsdp_xla_enabled"):
+            self.is_fsdp_xla_enabled = False
+
     # Copied from `Trainer`
     def _maybe_log_save_evaluate(self, tr_loss, model, trial, epoch, ignore_keys_for_eval):
         if self.control.should_log:
@@ -233,7 +249,6 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
             self._save_checkpoint(model, trial, metrics=metrics)
             self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
-    # Copied from `Trainer`
     def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
         """
         Perform a training step on a batch of inputs.
@@ -252,6 +267,12 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
         Return:
             `torch.Tensor`: The tensor with training loss on this batch.
         """
+        # NOTE: to handel empty batch during training due to LSJ augmentation.
+        # We set `inputs` to None in `training_step` when the batch is empty.
+        if inputs is None:
+            logger.error("The inputs shouldn't be None in training! Thus we skip this batch of data.")
+            return torch.tensor(torch.nan)
+
         model.train()
         inputs = self._prepare_inputs(inputs)
 
@@ -264,15 +285,16 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
 
         if self.args.n_gpu > 1:
             loss = loss.mean()  # mean() to average on multi-gpu parallel training
-
         self._do_backward(loss)
 
         return loss.detach() / self.args.gradient_accumulation_steps
 
     def _do_backward(self, loss):
-        if self.do_grad_scaling:
-            self.scaler.scale(loss).backward()
-        elif self.use_apex:
+        # NOTE: bump transformers from 4.30.2 to 4.36.2
+        # sharded_ddp for fairseq was deprecated.
+        # if self.do_grad_scaling:
+        #     self.scaler.scale(loss).backward()
+        if self.use_apex:
             with amp.scale_loss(loss, self.optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
@@ -588,9 +610,13 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
                 losses = self._nested_gather(loss.repeat(batch_size))
                 losses_host = losses if losses_host is None else torch.cat((losses_host, losses), dim=0)
             if labels is not None:
-                labels = self._pad_across_processes(labels)
+                # NOTE: bump transformers from 4.30.2 to 4.36.2
+                # labels = self._pad_across_processes(labels)
+                labels = self.accelerator.pad_across_processes(labels, dim=1, pad_index=-100)
             if inputs_decode is not None:
-                inputs_decode = self._pad_across_processes(inputs_decode)
+                # NOTE: bump transformers from 4.30.2 to 4.36.2
+                # inputs_decode = self._pad_across_processes(inputs_decode)
+                inputs_decode = self.accelerator.pad_across_processes(inputs_decode, dim=1, pad_index=-100)
                 inputs_decode = self._nested_gather(inputs_decode)
                 inputs_host = (
                     inputs_decode
@@ -598,7 +624,9 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
                     else nested_concat(inputs_host, inputs_decode, padding_index=-100)
                 )
             if logits is not None:
-                logits = self._pad_across_processes(logits)
+                # NOTE: bump transformers from 4.30.2 to 4.36.2
+                # logits = self._pad_across_processes(logits)
+                logits = self.accelerator.pad_across_processes(logits, dim=1, pad_index=-100)
                 if self.preprocess_logits_for_metrics is not None:
                     logits = self.preprocess_logits_for_metrics(logits, labels)
                 logits = self._nested_gather(logits)
@@ -608,7 +636,9 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
             # NOTE(xiaoke): Modified. We need to save the inputs for ids
             if metadata is not None:
-                metadata = self._pad_across_processes(metadata)
+                # NOTE: bump transformers from 4.30.2 to 4.36.2
+                # metadata = self._pad_across_processes(metadata)
+                metadata = self.accelerator.pad_across_processes(metadata, dim=1, pad_index=-100)
                 metadata = self._nested_gather(metadata)
                 metadata_host = (
                     metadata if metadata_host is None else nested_concat(metadata_host, metadata, padding_index=-100)
@@ -844,9 +874,7 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
         # which could cause problem in sharded distributed inference. The `prediction_step` used in `*_loop` is affected too.
         # NOTE(xiaoke): Modified. Adapt for region caption task and chunk inference to reduce memory consumption.
         inputs = self._prepare_input_dtype(inputs, self.model.dtype)  # NOTE: for fp16 inference
-        generated_outputs = self.model.generate(
-            generate_chunk_size=getattr(self.args, "generate_chunk_size"), **inputs, **gen_kwargs
-        )
+        generated_outputs = self._generate_in_inference_step(inputs, gen_kwargs)
         generated_tokens = generated_outputs.sequences
         iou_scores = generated_outputs.iou_scores
         pred_masks = generated_outputs.pred_masks
@@ -903,6 +931,122 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
         # which is very memory consuming. e.g., 230k*3*256*256=45GB
         logits = dict(generated_tokens=generated_tokens, iou_scores=iou_scores)
         return loss, logits, batch_num_regions_shape, labels
+
+    PROMPT_TYPES_TO_ABLATE_ON_VG = ["center_point_in_box", "random_point_in_box", "random_point_in_mask", None]
+    SAM_IMAGE_PROCESSOR = None
+
+    def _generate_in_inference_step(self, inputs, gen_kwargs):
+        prompt_types_to_ablate_on_vg = getattr(self.args, "prompt_types_to_ablate_on_vg", None)
+
+        if prompt_types_to_ablate_on_vg not in self.PROMPT_TYPES_TO_ABLATE_ON_VG:
+            raise ValueError(
+                f"prompt_types_to_ablate_on_vg is {prompt_types_to_ablate_on_vg}. It should be one of {self.PROMPT_TYPES_TO_ABLATE_ON_VG}"
+            )
+
+        if prompt_types_to_ablate_on_vg == "center_point_in_box":
+            logger.debug("prompt types is [center_point_in_box] to ablate on VG")
+            input_boxes = inputs["input_boxes"]
+
+            center_points_x = input_boxes[:, :, [0, 2]].mean(dim=-1)
+            center_points_y = input_boxes[:, :, [1, 3]].mean(dim=-1)
+            center_points = torch.stack((center_points_x, center_points_y), dim=-1)
+            center_points = center_points.unsqueeze(-2)
+
+            inputs["input_points"] = center_points
+            inputs["input_boxes"] = None
+
+        elif prompt_types_to_ablate_on_vg == "random_point_in_box":
+            logger.debug("prompt types is [random_point_in_box] to ablate on VG")
+            input_boxes = inputs["input_boxes"]
+
+            # NOTE: Uniformly sample a point in the box, the shape of the box is (batch_size, num_regions, 4), the coordinate are xyxy.
+            # NOTE: the shape of the point is (batch_size, num_regions, 1, 2), the coordinates are xy.
+            random_points = torch.rand(input_boxes.shape[:2] + (2,), device=input_boxes.device)
+            # NOTE: the shape of the point is (batch_size, num_regions, 2)
+            random_points = input_boxes[:, :, [0, 1]] + random_points * (
+                input_boxes[:, :, [2, 3]] - input_boxes[:, :, [0, 1]]
+            )
+            random_points = random_points.unsqueeze(-2)
+
+            inputs["input_points"] = random_points
+            inputs["input_boxes"] = None
+
+        elif prompt_types_to_ablate_on_vg == "random_point_in_mask":
+            logger.debug("prompt types is [random_point_in_mask] to ablate on VG")
+            if self.SAM_IMAGE_PROCESSOR is None:
+                from src.models.sam.image_processing_sam import SamImageProcessor
+
+                self.SAM_IMAGE_PROCESSOR = SamImageProcessor()
+
+            # NOTE: generate the binary mask
+            generated_outputs = self.model.generate(
+                generate_chunk_size=getattr(self.args, "generate_chunk_size"), **inputs, **gen_kwargs
+            )
+            iou_scores = generated_outputs.iou_scores  # (batch_size, num_regions, 3)
+            iou_scores_max_head = iou_scores.argmax(dim=-1)  # (batch_size, num_regions)
+            pred_masks = generated_outputs.pred_masks  # (batch_size, num_regions, 3, H, W)
+
+            # NOTE: A list of binary masks, List[torch.Tensor]]: list shape (batch_size), bool tensor shape (num_regions, num_heads, H, W)
+            masks = self.SAM_IMAGE_PROCESSOR.post_process_masks(
+                pred_masks, inputs["original_sizes"], inputs["reshaped_input_sizes"]
+            )
+
+            # NOTE: Sample random point in each masks
+            input_boxes = inputs["input_boxes"]
+            dtype = input_boxes.dtype
+            center_points_x = input_boxes[:, :, [0, 2]].mean(dim=-1)
+            center_points_y = input_boxes[:, :, [1, 3]].mean(dim=-1)
+            center_points = torch.stack((center_points_x, center_points_y), dim=-1)
+
+            random_points = []
+            for batch_idx, batch_masks in enumerate(masks):
+                resized_scale = inputs["reshaped_input_sizes"][batch_idx] / inputs["original_sizes"][batch_idx]
+
+                batch_iou_scores_max_head = iou_scores_max_head[batch_idx]  # (num_regions)
+                batch_masks  # (num_regions, num_heads, H, W)
+                max_indices = batch_iou_scores_max_head.view(-1, 1, 1, 1).expand(
+                    -1, 1, batch_masks.size(2), batch_masks.size(3)
+                )
+                # NOTE: gather do not support multi-dim indexing, so we need to flatten the first dim
+                max_confidence_masks = batch_masks.gather(1, max_indices).squeeze(1)
+
+                # NOTE: for debug
+                # for i in range(len(max_confidence_masks)):
+                #     assert torch.allclose(max_confidence_masks[i], batch_masks[i, batch_iou_scores_max_head[i]])
+
+                batch_random_points = []
+                for region_id, mask in enumerate(max_confidence_masks):
+                    # NOTE: Find the indices of all True values in the mask
+                    # NOTE: the index is yx, we need to flip it
+                    true_indices = mask.nonzero(as_tuple=False).to(dtype=dtype)  # Shape: [num_true_points, 2]
+                    true_indices = torch.flip(true_indices, dims=[-1])  # Shape: [num_true_points, 2]
+
+                    if len(true_indices) > 0:
+                        selected_index = true_indices[torch.randint(0, len(true_indices), ())]
+                        # NOTE: scale it as `input_boxes` and `input_points` are scaled to 1024 in the image preprocessor of SAM.
+                        selected_index = selected_index * resized_scale
+
+                        batch_random_points.append(selected_index)
+                    else:
+                        # In case there are no True values in the mask, append None or a placeholder
+                        logger.error("No True values in the mask!")
+                        batch_random_points.append(center_points[batch_idx, region_id])
+                batch_random_points = torch.stack(batch_random_points, dim=0)
+                random_points.append(batch_random_points)
+
+            random_points = torch.stack(random_points, dim=0)
+            random_points = random_points.unsqueeze(-2)
+
+            inputs["input_points"] = random_points
+            inputs["input_boxes"] = None
+
+        else:
+            logger.debug("prompt types is [null] to ablate on VG")
+
+        generated_outputs = self.model.generate(
+            generate_chunk_size=getattr(self.args, "generate_chunk_size"), **inputs, **gen_kwargs
+        )
+        return generated_outputs
 
     # NOTE: END OF INFERENCE CODE
 
@@ -1083,27 +1227,29 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
 
             optimizer_cls, optimizer_kwargs = Trainer.get_optimizer_cls_and_kwargs(self.args)
 
-            if self.sharded_ddp == ShardedDDPOption.SIMPLE:
-                self.optimizer = OSS(
-                    params=optimizer_grouped_parameters,
-                    optim=optimizer_cls,
-                    **optimizer_kwargs,
-                )
-            else:
-                self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
-                if optimizer_cls.__name__ == "Adam8bit":
-                    import bitsandbytes
+            # NOTE: bump transformers from 4.30.2 to 4.36.2
+            # NOTE: deprecate fairscale's ShardedDDP, https://github.com/huggingface/transformers/pull/24825
+            # if self.sharded_ddp == ShardedDDPOption.SIMPLE:
+            #     self.optimizer = OSS(
+            #         params=optimizer_grouped_parameters,
+            #         optim=optimizer_cls,
+            #         **optimizer_kwargs,
+            #     )
+            # else:
+            self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
+            if optimizer_cls.__name__ == "Adam8bit":
+                import bitsandbytes
 
-                    manager = bitsandbytes.optim.GlobalOptimManager.get_instance()
+                manager = bitsandbytes.optim.GlobalOptimManager.get_instance()
 
-                    skipped = 0
-                    for module in opt_model.modules():
-                        if isinstance(module, nn.Embedding):
-                            skipped += sum({p.data_ptr(): p.numel() for p in module.parameters()}.values())
-                            logger.info(f"skipped {module}: {skipped/2**20}M params")
-                            manager.register_module_override(module, "weight", {"optim_bits": 32})
-                            logger.debug(f"bitsandbytes: will optimize {module} in fp32")
-                    logger.info(f"skipped: {skipped/2**20}M params")
+                skipped = 0
+                for module in opt_model.modules():
+                    if isinstance(module, nn.Embedding):
+                        skipped += sum({p.data_ptr(): p.numel() for p in module.parameters()}.values())
+                        logger.info(f"skipped {module}: {skipped/2**20}M params")
+                        manager.register_module_override(module, "weight", {"optim_bits": 32})
+                        logger.debug(f"bitsandbytes: will optimize {module} in fp32")
+                logger.info(f"skipped: {skipped/2**20}M params")
 
         if is_sagemaker_mp_enabled():
             self.optimizer = smp.DistributedOptimizer(self.optimizer)
@@ -1188,15 +1334,6 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
 
     # NOTE: to handel empty batch during training due to LSJ augmentation.
     # We set `inputs` to None in `training_step` when the batch is empty.
-    def training_step(self, model: nn.Module, inputs: Optional[Dict[str, Union[torch.Tensor, Any]]]) -> torch.Tensor:
-        if inputs is None:
-            logger.error("The inputs shouldn't be None in training! Thus we skip this batch of data.")
-            return torch.tensor(torch.nan)
-
-        return super().training_step(model, inputs)
-
-    # NOTE: to handel empty batch during training due to LSJ augmentation.
-    # We set `inputs` to None in `training_step` when the batch is empty.
     # When encounter the None inputs, we keep the step
     def _inner_training_loop(
         self,
@@ -1268,12 +1405,15 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
             else:
                 debug_overflow = DebugUnderflowOverflow(self.model)  # noqa
 
-        delay_optimizer_creation = (
-            self.sharded_ddp is not None
-            and self.sharded_ddp != ShardedDDPOption.SIMPLE
-            or is_sagemaker_mp_enabled()
-            or self.fsdp is not None
-        )
+        # NOTE: bump transformers from 4.30.2 to 4.36.2
+        # NOTE: deprecate fairscale's ShardedDDP, https://github.com/huggingface/transformers/pull/24825
+        # delay_optimizer_creation = (
+        #     self.sharded_ddp is not None
+        #     and self.sharded_ddp != ShardedDDPOption.SIMPLE
+        #     or is_sagemaker_mp_enabled()
+        #     or self.fsdp is not None
+        # )
+        delay_optimizer_creation = is_sagemaker_mp_enabled() or self.is_fsdp_xla_enabled or self.is_fsdp_enabled
 
         if self.is_deepspeed_enabled:
             self.optimizer, self.lr_scheduler = deepspeed_init(self, num_training_steps=max_steps)
@@ -1283,10 +1423,39 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
 
         self.state = TrainerState()
         self.state.is_hyper_param_search = trial is not None
+        # NOTE: bump transformers from 4.30.2 to 4.36.2
+        # The arguments for on_step_end are moved from `args` to `state`
+        self.state.train_batch_size = self._train_batch_size
 
+        # Compute absolute values for logging, eval, and save if given as ratio
+        if args.logging_steps is not None:
+            if args.logging_steps < 1:
+                self.state.logging_steps = math.ceil(max_steps * args.logging_steps)
+            else:
+                self.state.logging_steps = args.logging_steps
+        if args.eval_steps is not None:
+            if args.eval_steps < 1:
+                self.state.eval_steps = math.ceil(max_steps * args.eval_steps)
+            else:
+                self.state.eval_steps = args.eval_steps
+        if args.save_steps is not None:
+            if args.save_steps < 1:
+                self.state.save_steps = math.ceil(max_steps * args.save_steps)
+            else:
+                self.state.save_steps = args.save_steps
+
+        # NOTE: bump transformers from 4.30.2 to 4.36.2
         # Activate gradient checkpointing if needed
         if args.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable()
+            try:
+                if args.gradient_checkpointing_kwargs is None:
+                    gradient_checkpointing_kwargs = {}
+                else:
+                    gradient_checkpointing_kwargs = args.gradient_checkpointing_kwargs
+
+                self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs=gradient_checkpointing_kwargs)
+            except AttributeError:
+                self.model.gradient_checkpointing_enable()
 
         model = self._wrap_model(self.model_wrapped)
 
@@ -1433,10 +1602,14 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
 
         total_batched_samples = 0
         for epoch in range(epochs_trained, num_train_epochs):
-            if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
-                train_dataloader.sampler.set_epoch(epoch)
-            elif hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
-                train_dataloader.dataset.set_epoch(epoch)
+            # NOTE: bump transformers from 4.30.2 to 4.36.2
+            # if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
+            #     train_dataloader.sampler.set_epoch(epoch)
+            # elif hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDatasetShard):
+            #     train_dataloader.dataset.set_epoch(epoch)
+            epoch_iterator = train_dataloader
+            if hasattr(epoch_iterator, "set_epoch"):
+                epoch_iterator.set_epoch(epoch)
 
             if is_torch_tpu_available():
                 parallel_loader = pl.ParallelLoader(train_dataloader, [args.device]).per_device_loader(args.device)
@@ -1520,13 +1693,15 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
                     if args.max_grad_norm is not None and args.max_grad_norm > 0:
                         # deepspeed does its own clipping
 
-                        if self.do_grad_scaling:
-                            # Reduce gradients first for XLA
-                            if is_torch_tpu_available():
-                                gradients = xm._fetch_gradients(self.optimizer)
-                                xm.all_reduce("sum", gradients, scale=1.0 / xm.xrt_world_size())
-                            # AMP: gradients need unscaling
-                            self.scaler.unscale_(self.optimizer)
+                        # NOTE: bump transformers from 4.30.2 to 4.36.2
+                        # sharded_ddp for fairseq was deprecated.
+                        # if self.do_grad_scaling:
+                        #     # Reduce gradients first for XLA
+                        #     if is_torch_tpu_available():
+                        #         gradients = xm._fetch_gradients(self.optimizer)
+                        #         xm.all_reduce("sum", gradients, scale=1.0 / xm.xrt_world_size())
+                        #     # AMP: gradients need unscaling
+                        #     self.scaler.unscale_(self.optimizer)
 
                         if is_sagemaker_mp_enabled() and args.fp16:
                             self.optimizer.clip_master_grads(args.max_grad_norm)
@@ -1551,17 +1726,19 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
                     # Optimizer step
                     optimizer_was_run = True
                     if is_torch_tpu_available():
-                        if self.do_grad_scaling:
-                            self.scaler.step(self.optimizer)
-                            self.scaler.update()
-                        else:
-                            xm.optimizer_step(self.optimizer)
-                    elif self.do_grad_scaling:
-                        scale_before = self.scaler.get_scale()
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                        scale_after = self.scaler.get_scale()
-                        optimizer_was_run = scale_before <= scale_after
+                        # NOTE: bump transformers from 4.30.2 to 4.36.2
+                        # sharded_ddp for fairseq was deprecated.
+                        # if self.do_grad_scaling:
+                        #     self.scaler.step(self.optimizer)
+                        #     self.scaler.update()
+                        # else:
+                        xm.optimizer_step(self.optimizer)
+                    # elif self.do_grad_scaling:
+                    #     scale_before = self.scaler.get_scale()
+                    #     self.scaler.step(self.optimizer)
+                    #     self.scaler.update()
+                    #     scale_after = self.scaler.get_scale()
+                    #     optimizer_was_run = scale_before <= scale_after
                     else:
                         self.optimizer.step()
                         optimizer_was_run = not self.accelerator.optimizer_step_was_skipped
@@ -1658,28 +1835,17 @@ class SCASeq2SeqTrainer(Seq2SeqTrainer):
 
         return TrainOutput(self.state.global_step, train_loss, metrics)
 
-    # NOTE: Fix the resume of DS optimizer + HF scheduler. https://github.com/huggingface/transformers/pull/25863/files
     def _save_checkpoint(self, model, trial, metrics=None):
-        super()._save_checkpoint(model, trial, metrics=metrics)
+        # NOTE: Temporay fix multi-node saving bugs: https://github.com/huggingface/transformers/issues/27925#issuecomment-1869331349
+        try:
+            super()._save_checkpoint(model, trial, metrics=metrics)
+        except FileNotFoundError:
+            pass
 
-        # Save SCHEDULER & SCALER for DeepSpeed optimizer + HuggingFace scheduler
+        # NOTE: it is possible for partial saving which cannot be read.
         checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
         run_dir = self._get_output_dir(trial=trial)
         output_dir = os.path.join(run_dir, checkpoint_folder)
-        is_deepspeed_custom_scheduler = self.is_deepspeed_enabled and not isinstance(
-            self.lr_scheduler, DeepSpeedSchedulerWrapper
-        )
-        if (
-            self.args.should_save
-            and (not self.is_deepspeed_enabled or is_deepspeed_custom_scheduler)
-            and not is_torch_tpu_available()
-        ):
-            with warnings.catch_warnings(record=True) as caught_warnings:
-                torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, SCHEDULER_NAME))
-            reissue_pt_warnings(caught_warnings)
-            if self.do_grad_scaling:
-                torch.save(self.scaler.state_dict(), os.path.join(output_dir, SCALER_NAME))
-        # NOTE: it is possible for partial saving which cannot be read.
         open(os.path.join(output_dir, SAVING_FINISHED_FLAG), "a").close()
 
     # NOTE: Fix the resume of DS optimizer + HF scheduler. https://github.com/huggingface/transformers/pull/25863/files
