@@ -6,7 +6,9 @@ The docker image: `nvidia/pytorch:23.07-py3`
 
 ```shell
 alias=`whoami | cut -d'.' -f2`
-docker run -itd --runtime=nvidia --ipc=host --privileged -v /home/${alias}:/home/${alias} -w `pwd` --name sca nvcr.io/nvidia/pytorch:22.10-py3 bash
+docker run -itd --runtime=nvidia --ipc=host --privileged --network host -v /home/${alias}:/home/${alias} -w `pwd` --name sca nvcr.io/nvidia/pytorch:23.07-py3 bash
+# Maybe we need this version for evaluation
+# docker run -itd --runtime=nvidia --ipc=host --privileged --network host -v /home/${alias}:/home/${alias} -w `pwd` --name sca nvcr.io/nvidia/pytorch:22.10-py3 bash
 docker exec -it sca bash
 
 # In the docker container
