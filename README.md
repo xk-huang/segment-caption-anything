@@ -64,11 +64,11 @@ Deeply appreciate these wonderful open source projects: [transformers](https://g
 If you find this repository useful, please consider giving a star ⭐ and citation 🦖:
 
 ```
-@misc{xiaoke2023SCA,
-  title={{Segment and Caption Anything}},
-  author={Xiaoke, Huang and Jianfeng, Wang and Yansong, Tang and Zheng, Zhang and Han, Hu and Jiwen, Lu and Lijuan, Wang and Zicheng, Liu},
-  journal={arXiv},
-  volume={abs/2312.00869},
-  year={2023},
+@inproceedings{huang2024segment,
+  title={Segment and caption anything},
+  author={Huang, Xiaoke and Wang, Jianfeng and Tang, Yansong and Zhang, Zheng and Hu, Han and Lu, Jiwen and Wang, Lijuan and Liu, Zicheng},
+  booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
+  pages={13405--13417},
+  year={2024}
 }
 ```
